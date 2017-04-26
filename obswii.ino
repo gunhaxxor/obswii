@@ -242,6 +242,9 @@ void loop(){
   now = millis();
 
   if(role == baseStation){
+    for (size_t i = 0; i < nrOfLeds; i++) {
+      pushState[currentNode].leds[i] = deviceState[currentNode].buttons[i];
+    }
     if(pollNode(0, 0, (uint8_t*)&pushState[currentNode], (uint8_t*) &deviceState[currentNode])){
       // printf("poll received\n");
     }else{
@@ -268,10 +271,13 @@ void loop(){
 
 
   //Let's fake a radiomessage update
-  if(sinceFakeRadioMessage > fakeRadioMessageInterval){
-    sinceFakeRadioMessage = 0;
-    int randomLed = random(nrOfLeds);
-    deviceState[role].leds[randomLed] = !deviceState[role].leds[randomLed];
+  // if(sinceFakeRadioMessage > fakeRadioMessageInterval){
+  //   sinceFakeRadioMessage = 0;
+  //   int randomLed = random(nrOfLeds);
+  //   deviceState[role].leds[randomLed] = !deviceState[role].leds[randomLed];
+  // }
+  for (size_t i = 0; i < nrOfLeds; i++) {
+    deviceState[role].leds[i] = pushState[role].leds[i];
   }
 
 
