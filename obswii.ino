@@ -1,5 +1,14 @@
-// #include <Bounce.h>
-
+// -----------------------OBSWII CODE
+// PINOUT
+//  RADIO
+//  Vcc       -     Vcc
+//  GND       -     GND
+//  CE        -     9
+//  CSN(CS)   -     10
+//  SCK       -     27
+//  MOSI      -     11
+//  MISO      -     12
+//  INT       -     26
 #include "MAPPINGS.h"
 #include "button.h"
 #include "knob.h"
@@ -15,9 +24,10 @@ void commonSetup();
 void setupAcker(int nodeNr);
 void setupPoller();
 
-// Set up nRF24L01 radio on SPI bus plus pins 9 & 10
-RF24 radio(14,10);
-const uint8_t radioIRQPin = 15;
+// Set up nRF24L01 radio on SPI bus plus pins CE 9 & CS(N) 10
+// RF24 radio(14,10);
+RF24 radio(9,10);
+uint8_t radioIRQPin = 15;
 
 const int8_t autoRole = -1;
 int currentNode = 0;
@@ -61,7 +71,7 @@ const bool useRadio = true;
   uint8_t currentCommands[nrOfNodes][commandArraySize];
   bool commandReceived[nrOfNodes];
 //node
-  volatile binaryInt16 transmitData[23] = {0}; //Should never be filled with more than 30 bytes, but make it bigger in case.
+  // volatile binaryInt16 transmitData[23] = {0}; //Should never be filled with more than 30 bytes, but make it bigger in case.
   volatile uint8_t receivedCommands[commandArraySize];
 
   struct state { //Be sure to make this struct aligned!!
@@ -79,8 +89,9 @@ const bool useRadio = true;
     uint8_t    rotary;
     uint8_t    leds[5];
   };
-  struct state deviceState;
-  const int stateSize = sizeof(deviceState);
+  state deviceState[2];
+  state pushState[2];
+  const int stateSize = sizeof(deviceState[0]);
 
 //Radio status information
 // int receivedPollPacketsOnPipe[nrOfNodes] = {0,0};
@@ -193,18 +204,18 @@ void setup(){
       pinMode(i, INPUT_PULLUP);
       delay(2);
       if(!digitalRead(i)){
-        role = i+1;
+        role = i;
         break;
       }
     }
   }
-
+  delay(1600);
   printf("ROLE: %s\n\r",role_friendly_name[role]);
 
   if(role == baseStation){
-
   }else{
-
+    SPI.setSCK(27);
+    radioIRQPin = 26;
   }
 
   //Radio Stuff!
@@ -223,20 +234,35 @@ void setup(){
 
   now = millis();
   interrupts();
+  delay(2500);
 }
 
 void loop(){
   //What is the time?
   now = millis();
 
+  if(role == baseStation){
+    if(pollNode(0, 0, (uint8_t*)&pushState[currentNode], (uint8_t*) &deviceState[currentNode])){
+      // printf("poll received\n");
+    }else{
+      // printf("poll failed\n");
+    }
+    //Let's fake a radiomessage update
+    if(sincePrint > printInterval){
+      sincePrint = 0;
+      printState(deviceState[currentNode]);
+    }
+    return;
+  }
+
   if(rotary.updated()){
-    deviceState.rotary = rotary.value;
+    deviceState[role].rotary = rotary.value;
   }
   for (size_t i = 0; i < nrOfButtons; i++) {
-    deviceState.buttons[i] = button[i].value;
+    deviceState[role].buttons[i] = button[i].value;
   }
-  deviceState.rotaryButton = encButton.value;
-  deviceState.shake = shakeSensor.value;
+  deviceState[role].rotaryButton = encButton.value;
+  deviceState[role].shake = shakeSensor.value;
 
   //Let's update quaternion last.
 
@@ -245,20 +271,20 @@ void loop(){
   if(sinceFakeRadioMessage > fakeRadioMessageInterval){
     sinceFakeRadioMessage = 0;
     int randomLed = random(nrOfLeds);
-    deviceState.leds[randomLed] = !deviceState.leds[randomLed];
+    deviceState[role].leds[randomLed] = !deviceState[role].leds[randomLed];
   }
 
 
   //Now set the leds from the deviceState (which should be updated by received radio mesage)
   for (size_t i = 0; i < nrOfLeds; i++) {
-    digitalWrite(ledPins[i], deviceState.leds[i]%2);
+    digitalWrite(ledPins[i], deviceState[role].leds[i]%2);
   }
 
   //Let's fake a radiomessage update
   if(sincePrint > printInterval){
     sincePrint = 0;
 
-    printState(deviceState);
+    printState(deviceState[role]);
   }
 
 }

@@ -157,8 +157,8 @@ bool pollNode(uint8_t node, uint8_t* commands, uint8_t* pushState, uint8_t* getS
   int i = 0;
   data[i++] = 'n';
   data[i++] = millis(); //unique dummy data. Edge goes here in relay requests
-  memcpy(&data[i], commands, commandArraySize);
-  i += commandArraySize;
+  // memcpy(&data[i], commands, commandArraySize);
+  // i += commandArraySize;
   memcpy(&data[i], pushState, stateSize);
   i += stateSize;
   // data[i++] = command[0]; //Chosen sensor
@@ -171,7 +171,7 @@ bool pollNode(uint8_t node, uint8_t* commands, uint8_t* pushState, uint8_t* getS
 
   if(i >= 32){
     printf("max payload size. Error!!!");
-    return;
+    return false;
   }
 
   // printf("opening normal pipe for writing request: %s \n", pipes[node]);
@@ -190,7 +190,7 @@ bool pollNode(uint8_t node, uint8_t* commands, uint8_t* pushState, uint8_t* getS
     // }
   }else{
     // updateStats(node, false, false, startStamp);
-    // Serial.println("pollNode failed");
+    Serial.println("pollNode failed");
     ok = false;
   }
 
@@ -350,16 +350,18 @@ FASTRUN void radioInterrupt(void){
   // irqStamp = micros();
   // unsigned long IrqStartStamp = micros();
 
-  int bytesToSend = 30;
+  // int bytesToSend = 30;
+  int i = 0;
   uint8_t txData[32] = {0};
-  txData[0] = role;
-  txData[1] = incSendStamp();
-  memcpy(&txData[2], (void*) transmitData, bytesToSend-2);
+  txData[i++] = role;
+  txData[i++] = incSendStamp();
+  memcpy(&txData[2], (uint8_t*) &deviceState[role], stateSize);
+  i += stateSize;
 
   radio.flush_tx();
-  radio.writeAckPayload(1, txData, bytesToSend);
-  radio.writeAckPayload(2, txData, bytesToSend);
-  radio.writeAckPayload(3, txData, bytesToSend);
+  radio.writeAckPayload(1, txData, i+1);
+  radio.writeAckPayload(2, txData, i+1);
+  radio.writeAckPayload(3, txData, i+1);
 
   bool tx,fail,rx;
   radio.whatHappened(tx,fail,rx);                     // What happened?
@@ -381,18 +383,18 @@ FASTRUN void radioInterrupt(void){
     }
     switch (rxData[0]){//First byte always describes type of message
       case 'r':{//This was a relaying request.
-        // printf("This was a relay request to %i\n", rxData[1]);
+        printf("This was a relay request to %i\n", rxData[1]);
         // relayPendingTo = rxData[1]+1;
         // pollEdgeAndSendToBase(rxData[1], &rxData[2]+commandArraySize);
         break;
       }
       case 'e':
         //This was an edge request
-        // printf("This was an edge request\n");
+        printf("This was an edge request to %i\n", rxData[2]);
         break;
       case 'n':
         //This was a normal request
-        // printf("This was a normal request\n");
+        printf("This was a normal request\n");
         break;
       default:
         // printf("corrupt request type was %c (char), %i (int) \n", rxData[0], rxData[0]);
@@ -400,7 +402,7 @@ FASTRUN void radioInterrupt(void){
     }
 
     // uint8_t cmd = rxData[2];
-    memcpy((void*) receivedCommands, &rxData[2], commandArraySize);
+    memcpy((uint8_t*) &pushState[role], &rxData[2], stateSize);
     // printf("command is: %c \n", cmd);
     // if(cmd != 0){
     //   sendSensors = cmd;
@@ -493,15 +495,17 @@ bool waitForBridge(unsigned long timeout, uint8_t edge, uint8_t* link, binaryInt
 
 //This function should be called directly after radio.write()
 //Only call this function if you're prepared to discard packets laying in front of the expected ackPack in the rxfifo
-bool handleReceivedAckPayload(uint8_t* receive, uint8_t* size){
+bool handleReceivedAckPayload(uint8_t* getState, uint8_t* size){
   uint8_t pipe;
   bool result = false;
   while(radio.available(&pipe) ){
     // printf("pack in pipe %i \n", pipe);
     *size = radio.getDynamicPayloadSize();
+    uint8_t receive[*size];
     radio.read(receive, *size);
+    memcpy(getState, &receive[2], stateSize);
     if(pipe == 0){ // ack packs must come on pipe 0!
-      // printf("ack payload received from node %i with size %i and stamp: %i\n", receive[0].c[0], *size, receive[0].c[1]);
+      // printf("ack payload received from node %i with size %i and stamp: %i\n", receive[0], *size, receive[1]);
       result = true;
       break;
     }
