@@ -287,7 +287,7 @@ void loop()
 
   if (role == baseStation)
   {
-    delay(500);
+    // delay(1000);
     for (size_t i = 0; i < nrOfLeds; i++)
     {
       if (pushState[currentNode].leds[i] != deviceState[currentNode].buttons[i])
@@ -307,13 +307,13 @@ void loop()
     }
     else
     {
-      // printf("poll failed\n");
+      printf("pollnode failed\n");
     }
     //Let's fake a radiomessage update
     if (sincePrint > printInterval)
     {
       sincePrint = 0;
-      // printState(deviceState[currentNode]);
+      printState(deviceState[currentNode]);
     }
     return;
   }

@@ -176,6 +176,8 @@ bool pollNode(uint8_t node, uint8_t *commands, uint8_t *pushState, uint8_t *getS
     return false;
   }
 
+  printf("stop listening\n");
+  radio.stopListening();
   printf("opening normal pipe for writing request: %s \n", pipes[node]);
   radio.openWritingPipe(pipes[node]);
 
@@ -372,7 +374,7 @@ FASTRUN void radioInterrupt(void)
   memcpy(&txData[2], (uint8_t *)&deviceState[role], stateSize);
   i += stateSize;
 
-  radio.flush_tx();
+  // radio.flush_tx();
   radio.writeAckPayload(1, txData, i + 1);
   radio.writeAckPayload(2, txData, i + 1);
   radio.writeAckPayload(3, txData, i + 1);
@@ -387,6 +389,7 @@ FASTRUN void radioInterrupt(void)
 
     if (!radio.available())
     { //Exit if there is no message. This was probably a queued ISR.
+      printf("no message. This was probably a queued ISR.");
       return;
     }
     while (radio.available())
@@ -395,6 +398,7 @@ FASTRUN void radioInterrupt(void)
       if (size != 0)
       {
         radio.read(rxData, size);
+        printf("received payload of size: %i\n", size);
       }
       else
       {
@@ -525,18 +529,19 @@ bool waitForBridge(unsigned long timeout, uint8_t edge, uint8_t *link, binaryInt
 //Only call this function if you're prepared to discard packets laying in front of the expected ackPack in the rxfifo
 bool handleReceivedAckPayload(uint8_t *getState, uint8_t *size)
 {
+  printf("handling ack payload\n");
   uint8_t pipe;
   bool result = false;
   while (radio.available(&pipe))
   {
-    // printf("pack in pipe %i \n", pipe);
+    printf("pack in pipe %i \n", pipe);
     *size = radio.getDynamicPayloadSize();
     uint8_t receive[*size];
     radio.read(receive, *size);
     memcpy(getState, &receive[2], stateSize);
     if (pipe == 0)
     { // ack packs must come on pipe 0!
-      // printf("ack payload received from node %i with size %i and stamp: %i\n", receive[0], *size, receive[1]);
+      printf("ack payload received from node %i with size %i and stamp: %i\n", receive[0], *size, receive[1]);
       result = true;
       break;
     }
