@@ -17,13 +17,6 @@
 #include <SPI.h>
 #include "nRF24L01.h"
 #include "RF24.h"
-#include <i2c_t3.h>
-#define NOSTOP I2C_NOSTOP
-#include "EM7180.h"
-
-EM7180 em7180;
-
-// #include "usfs.cpp"
 
 unsigned long now = 0;
 
@@ -244,214 +237,25 @@ void setup()
 
   if (role != baseStation)
   {
-    //Orientation sensor stuff -------------------------
-    Wire.begin(I2C_MASTER, 0x00, I2C_PINS_16_17, I2C_PULLUP_EXT, I2C_RATE_400);
-    // Should detect SENtral at 0x28
-    I2Cscan();
+    //Configure peripherals and ground pins (really hope the pins are capabe of sinking enough current!!!!)
+    // configurePinAsGround(rotaryGroundPin);
+    rotary.init();
+    // configurePinAsGround(shakeSensorGroundPin);
+    shakeSensor.init();
+    // configurePinAsGround(encButtonGroundPin);
+    encButton.init();
 
-    // Start EM7180 interaction
-    em7180.begin();
-
-    // Check SENtral status, make sure EEPROM upload of firmware was accomplished
-    for (uint8_t k = 0; k < 10; ++k)
+    // configurePinAsGround(buttonsGroundPin);
+    for (size_t i = 0; i < nrOfButtons; i++)
     {
-
-      uint8_t stat = em7180.getSentralStatus() & 0x01;
-
-      if (stat & 0x01)
-        Serial.println("EEPROM detected on the sensor bus!");
-      if (stat & 0x02)
-        Serial.println("EEPROM uploaded config file!");
-      if (stat & 0x04)
-        Serial.println("EEPROM CRC incorrect!");
-      if (stat & 0x08)
-        Serial.println("EM7180 in initialized state!");
-      if (stat & 0x10)
-        Serial.println("No EEPROM detected!");
-
-      if (stat)
-        break;
-
-      em7180.requestReset();
-
-      delay(500);
+      button[i].init();
     }
 
-    if (!(em7180.getSentralStatus() & 0x04))
-      Serial.println("EEPROM upload successful!");
+    for (size_t i = 0; i < nrOfLeds; i++)
+    {
+      pinMode(ledPins[i], OUTPUT);
+    }
 
-    // em7180.setPassThroughMode();
-    // // Fetch the WarmStart data from the M24512DFM I2C EEPROM
-    // readSenParams();
-    // // Take Sentral out of pass-thru mode and re-start algorithm
-    // em7180.setMasterMode();
-
-    // // Put the Sentral in pass-thru mode
-    // em7180.setPassThroughMode();
-
-    // // Fetch the WarmStart data from the M24512DFM I2C EEPROM
-    // readAccelCal();
-    // Serial.print("X-acc max: ");
-    // Serial.println(global_conf.accZero_max[0]);
-    // Serial.print("Y-acc max: ");
-    // Serial.println(global_conf.accZero_max[1]);
-    // Serial.print("Z-acc max: ");
-    // Serial.println(global_conf.accZero_max[2]);
-    // Serial.print("X-acc min: ");
-    // Serial.println(global_conf.accZero_min[0]);
-    // Serial.print("Y-acc min: ");
-    // Serial.println(global_conf.accZero_min[1]);
-    // Serial.print("Z-acc min: ");
-    // Serial.println(global_conf.accZero_min[2]);
-
-    // // Take Sentral out of pass-thru mode and re-start algorithm
-    // em7180.setMasterMode();
-
-    // Set SENtral in initialized state to configure registers
-
-    // em7180.setRunDisable();
-    // // Load Accel Cal
-    //   EM7180_acc_cal_upload();
-    // // Force initialize
-    // em7180.setRunEnable();
-
-    // Load Warm Start parameters
-    // EM7180_set_WS_params();
-
-    // Set SENtral in initialized state to configure registers
-    em7180.setRunDisable();
-
-    //Setup LPF bandwidth (BEFORE setting ODR's)
-    em7180.setAccelLpfBandwidth(0x03); // 41Hz
-    em7180.setGyroLpfBandwidth(0x01);  // 184Hz
-
-    // Set accel/gyro/mage desired ODR rates
-    em7180.setQRateDivisor(0x02);    // 100 Hz
-    em7180.setMagRate(0x64);         // 100 Hz
-    em7180.setAccelRate(0x14);       // 200/10 Hz
-    em7180.setGyroRate(0x14);        // 200/10 Hz
-    em7180.setBaroRate(0x80 | 0x32); // set enable bit and set Baro rate to 25 Hz
-
-    // Configure operating mode
-    em7180.algorithmControlReset(); // read scale sensor data
-
-    // Enable interrupt to host upon certain events
-    // choose host interrupts when any sensor updated (0x40), new gyro data (0x20), new accel data (0x10),
-    // new mag data (0x08), quaternions updated (0x04), an error occurs (0x02), or the SENtral needs to be reset(0x01)
-    em7180.enableEvents(0x07);
-
-    // Enable EM7180 run mode
-    em7180.setRunEnable();
-    delay(100);
-
-    // EM7180 parameter adjustments
-    Serial.println("Beginning Parameter Adjustments");
-
-    // Read sensor default FS values from parameter space
-    uint8_t param[4];
-    readParams(0x4A, param);
-
-    uint16_t EM7180_mag_fs = ((int16_t)(param[1] << 8) | param[0]);
-    uint16_t EM7180_acc_fs = ((int16_t)(param[3] << 8) | param[2]);
-    Serial.print("Magnetometer Default Full Scale Range: +/-");
-    Serial.print(EM7180_mag_fs);
-    Serial.println("uT");
-    Serial.print("Accelerometer Default Full Scale Range: +/-");
-    Serial.print(EM7180_acc_fs);
-    Serial.println("g");
-    readParams(0x4B, param); // Request to read  parameter 75
-    uint16_t EM7180_gyro_fs = ((int16_t)(param[1] << 8) | param[0]);
-    Serial.print("Gyroscope Default Full Scale Range: +/-");
-    Serial.print(EM7180_gyro_fs);
-    Serial.println("dps");
-    em7180.requestParamRead(0x00);  //End parameter transfer
-    em7180.algorithmControlReset(); // re-enable algorithm
-
-    // Disable stillness mode
-    EM7180_set_integer_param(0x49, 0x00);
-
-    // Write desired sensor full scale ranges to the EM7180
-    em7180.setMagAccFs(0x3E8, 0x08); // 1000 uT, 8 g
-    em7180.setGyroFs(0x7D0);         // 2000 dps
-
-    // Read sensor new FS values from parameter space
-    readParams(0x4A, param); // Request to read  parameter 74
-    EM7180_mag_fs = ((int16_t)(param[1] << 8) | param[0]);
-    EM7180_acc_fs = ((int16_t)(param[3] << 8) | param[2]);
-    Serial.print("Magnetometer New Full Scale Range: +/-");
-    Serial.print(EM7180_mag_fs);
-    Serial.println("uT");
-    Serial.print("Accelerometer New Full Scale Range: +/-");
-    Serial.print(EM7180_acc_fs);
-    Serial.println("g");
-    readParams(0x4B, param); // Request to read  parameter 75
-    EM7180_gyro_fs = ((int16_t)(param[1] << 8) | param[0]);
-    Serial.print("Gyroscope New Full Scale Range: +/-");
-    Serial.print(EM7180_gyro_fs);
-    Serial.println("dps");
-    em7180.requestParamRead(0x00);  //End parameter transfer
-    em7180.algorithmControlReset(); // re-enable algorithm
-
-    // Read EM7180 status
-    if (em7180.getRunStatus() & 0x01)
-      Serial.println(" EM7180 run status = normal mode");
-    uint8_t algoStatus = em7180.getAlgorithmStatus();
-    if (algoStatus & 0x01)
-      Serial.println(" EM7180 standby status");
-    if (algoStatus & 0x02)
-      Serial.println(" EM7180 algorithm slow");
-    if (algoStatus & 0x04)
-      Serial.println(" EM7180 in stillness mode");
-    if (algoStatus & 0x08)
-      Serial.println(" EM7180 mag calibration completed");
-    if (algoStatus & 0x10)
-      Serial.println(" EM7180 magnetic anomaly detected");
-    if (algoStatus & 0x20)
-      Serial.println(" EM7180 unreliable sensor data");
-    if (em7180.getPassThruStatus() & 0x01)
-      Serial.print(" EM7180 in passthru mode!");
-    uint8_t eventStatus = em7180.getEventStatus();
-    if (eventStatus & 0x01)
-      Serial.println(" EM7180 CPU reset");
-    if (eventStatus & 0x02)
-      Serial.println(" EM7180 Error");
-
-    // Give some time to read the screen
-    delay(1000);
-
-    // Check sensor status
-    uint8_t sensorStatus = em7180.getSensorStatus();
-    if (sensorStatus & 0x01)
-      sensorError("Magnetometer not acknowledging!");
-    if (sensorStatus & 0x02)
-      sensorError("Accelerometer not acknowledging!");
-    if (sensorStatus & 0x04)
-      sensorError("Gyro not acknowledging!");
-    if (sensorStatus & 0x10)
-      sensorError("Magnetometer ID not recognized!");
-    if (sensorStatus & 0x20)
-      sensorError("Accelerometer ID not recognized!");
-    if (sensorStatus & 0x40)
-      sensorError("Gyro ID not recognized!");
-  }
-
-  //Configure peripherals and ground pins (really hope the pins are capabe of sinking enough current!!!!)
-  // configurePinAsGround(rotaryGroundPin);
-  rotary.init();
-  // configurePinAsGround(shakeSensorGroundPin);
-  shakeSensor.init();
-  // configurePinAsGround(encButtonGroundPin);
-  encButton.init();
-
-  // configurePinAsGround(buttonsGroundPin);
-  for (size_t i = 0; i < nrOfButtons; i++)
-  {
-    button[i].init();
-  }
-
-  for (size_t i = 0; i < nrOfLeds; i++)
-  {
-    pinMode(ledPins[i], OUTPUT);
   }
 
   SPI.setSCK(RADIO_SCK_pin);
@@ -605,77 +409,9 @@ void nodeLoop()
     digitalWrite(ledPins[i], deviceState[role].leds[i] % 2);
   }
 
-  //handle orientation sensor
-  static float Quat[4];
-
-  static float ax;
-  static float ay;
-  static float az;
-  // Check event status register, way to check data ready by polling rather than interrupt
-  uint8_t eventStatus = em7180.getEventStatus(); // reading clears the register
-
-  // Check for errors
-  // Error detected, what is it?
-  if (eventStatus & 0x02)
-  {
-
-    uint8_t errorStatus = em7180.getErrorStatus();
-    if (!errorStatus)
-    {
-      Serial.print(" EM7180 sensor status = ");
-      Serial.println(errorStatus);
-      if (errorStatus == 0x11)
-        Serial.print("Magnetometer failure!");
-      if (errorStatus == 0x12)
-        Serial.print("Accelerometer failure!");
-      if (errorStatus == 0x14)
-        Serial.print("Gyro failure!");
-      if (errorStatus == 0x21)
-        Serial.print("Magnetometer initialization failure!");
-      if (errorStatus == 0x22)
-        Serial.print("Accelerometer initialization failure!");
-      if (errorStatus == 0x24)
-        Serial.print("Gyro initialization failure!");
-      if (errorStatus == 0x30)
-        Serial.print("Math error!");
-      if (errorStatus == 0x80)
-        Serial.print("Invalid sample rate!");
-    }
-    // Handle errors ToDo
-  }
-
-  // if no errors, see if new data is ready
-  // new acceleration data available
-  if (eventStatus & 0x10)
-  {
-
-    int16_t accelCount[3];
-
-    em7180.readAccelerometer(accelCount[0], accelCount[1], accelCount[2]);
-
-    // Now we'll calculate the accleration value into actual g's
-    ax = (float)accelCount[0] * 0.000488; // get actual g value
-    ay = (float)accelCount[1] * 0.000488;
-    az = (float)accelCount[2] * 0.000488;
-
-    // // Manages accelerometer calibration; is active when calibratingA > 0
-    // Accel_cal_check(accelCount);
-  }
-
-  if (eventStatus & 0x04)
-  {
-    em7180.readQuaternion(Quat[0], Quat[1], Quat[2], Quat[3]);
-    // printf("quat: x= %f, y=%f, z=%f, w=%f \n", Quat[0], Quat[1], Quat[2], Quat[3]);
-    deviceState[role].quaternion.w = floatToQ14(Quat[0]);
-    deviceState[role].quaternion.x = floatToQ14(Quat[1]);
-    deviceState[role].quaternion.y = floatToQ14(Quat[2]);
-    deviceState[role].quaternion.z = floatToQ14(Quat[3]);
-  }
-
   if (sincePrint > printInterval)
   {
     sincePrint = 0;
-    printAlgorithmStatus();
   }
 }
 
@@ -767,22 +503,6 @@ void printParameterWeights(){
     }
   }
   Serial.println();
-}
-
-void printAlgorithmStatus(){
-  uint8_t algoStatus = em7180.getAlgorithmStatus();
-    if (algoStatus & 0x01)
-      Serial.println(" EM7180 standby status");
-    if (algoStatus & 0x02)
-      Serial.println(" EM7180 algorithm slow");
-    if (algoStatus & 0x04)
-      Serial.println(" EM7180 in stillness mode");
-    if (algoStatus & 0x08)
-      Serial.println(" EM7180 mag calibration completed");
-    if (algoStatus & 0x10)
-      Serial.println(" EM7180 magnetic anomaly detected");
-    if (algoStatus & 0x20)
-      Serial.println(" EM7180 unreliable sensor data");
 }
 
 void printState(struct state deviceState)
