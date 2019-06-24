@@ -242,7 +242,7 @@ inline float quat_angle(quaternion q)
 // calculates the angle between two quaternions
 inline float quat_angle(const quaternion q1, const quaternion q2)
 {
-  return quat_angle(quat_delta_rotation(quat_uniform_w(q1), quat_uniform_w(q2)));
+  return quat_angle(quat_uniform_w(quat_delta_rotation((q1), (q2))));
 }
 
 inline void quat_axis(const float *q, float *vecOut)

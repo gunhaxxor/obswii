@@ -106,7 +106,8 @@ const int stateSize = sizeof(deviceState[0]);
 
 //Orientation sensor stuff
 quaternion currentQuaternion;
-quaternion learnedPoses[10];
+const int nrOfPoseSlots = 10;
+quaternion learnedPoses[nrOfPoseSlots] = {0};
 
 // bool initialized = false;
 // volatile bool radioEstablished = false;
@@ -524,11 +525,11 @@ void baseStationLoop()
 
   if (pollNode(0, 0, (uint8_t *)&pushState[currentNode], (uint8_t *)&deviceState[currentNode]))
   {
-    // printf("poll received\n");
+    printf("poll received\n");
   }
   else
   {
-    // printf("pollnode failed\n");
+    printf("pollnode failed\n");
   }
 
   for (size_t i = 0; i < nrOfLeds; i++)
@@ -549,7 +550,9 @@ void baseStationLoop()
   currentQuaternion.y = Q14ToFloat(deviceState[currentNode].quaternion.y);
   currentQuaternion.z = Q14ToFloat(deviceState[currentNode].quaternion.z);
 
-  if (sincePrint > printInterval)
+  calculateParameterWeights();
+
+  if (true || sincePrint > printInterval)
   {
     sincePrint = 0;
     // printState(deviceState[currentNode]);
@@ -569,6 +572,9 @@ void baseStationLoop()
     float angle = quat_angle(currentQuaternion, learnedPoses[0]);
     printf("delta angle: %f \n", toDegrees(angle));
     Serial.println();
+
+    printAngleDistances();
+    printParameterWeights();
   }
 
   handleSerial();
@@ -665,6 +671,118 @@ void nodeLoop()
     deviceState[role].quaternion.y = floatToQ14(Quat[2]);
     deviceState[role].quaternion.z = floatToQ14(Quat[3]);
   }
+
+  if (sincePrint > printInterval)
+  {
+    sincePrint = 0;
+    printAlgorithmStatus();
+  }
+}
+
+const float clampAngle = 5;
+bool activePoseSlots[nrOfPoseSlots] = {0};
+bool fullyTriggeredPoses[nrOfPoseSlots]  {0};
+float parameterWeights[nrOfPoseSlots] = {0};
+float distances[nrOfPoseSlots] = {0};
+float clampedDistances[nrOfPoseSlots] = {0};
+void calculateParameterWeights(){
+  float invertedDistancesSum = 0.f;
+  float InvertedDistances[nrOfPoseSlots] = {0};
+  bool anyPoseIsFullyTriggered = false;
+  for (size_t i = 0; i < nrOfPoseSlots; i++)
+  {
+    if(activePoseSlots[i]){
+      distances[i] = toDegrees(quat_angle(currentQuaternion, learnedPoses[i]));
+      if(distances[i] < clampAngle){
+        fullyTriggeredPoses[i] = true;
+        anyPoseIsFullyTriggered = true;
+      }else{
+        fullyTriggeredPoses[i] = false;
+      }
+    }
+  }
+
+  if(anyPoseIsFullyTriggered){
+    for (size_t i = 0; i < nrOfPoseSlots; i++)
+    {
+      if(activePoseSlots[i]){
+        if(fullyTriggeredPoses[i]){
+          InvertedDistances[i] = 1.0f/distances[i];
+          invertedDistancesSum += InvertedDistances[i];
+        }else{
+          InvertedDistances[i] = 0.0f;
+        }
+      }
+    }
+  }else{
+    for (size_t i = 0; i < nrOfPoseSlots; i++)
+    {
+      if(activePoseSlots[i]){
+        clampedDistances[i] = distances[i] - clampAngle;
+        InvertedDistances[i] = 1.0f/clampedDistances[i];
+        invertedDistancesSum += InvertedDistances[i];
+      }
+    }
+  }
+
+
+  for (size_t i = 0; i < nrOfPoseSlots; i++)
+  {
+    if(activePoseSlots[i]){
+      parameterWeights[i] = InvertedDistances[i] / invertedDistancesSum;
+    }
+  }
+}
+
+// const float poseClampThreshold = 0.9f;
+// const float poseClampMultiplier = 1.0f/poseClampThreshold;
+// void clampParameterWeights(){
+//   for (size_t i = 0; i < nrOfPoseSlots; i++)
+//   {
+//     if(activePoseSlots[i]){
+//       if(parameterWeights[i] > poseClampThreshold){
+
+//       }
+//     }
+//   }
+// }
+
+void printAngleDistances(){
+  printf("angleDistances: ");
+  for (size_t i = 0; i < nrOfPoseSlots; i++)
+  {
+    if(activePoseSlots[i]){
+      printf("%f, ", distances[i]);
+    }
+  }
+  Serial.println();
+}
+
+void printParameterWeights(){
+  printf("parameterWeights: ");
+  for (size_t i = 0; i < nrOfPoseSlots; i++)
+  {
+    if(activePoseSlots[i]){
+      printf("%f, ", parameterWeights[i]);
+    }
+  }
+  Serial.println();
+}
+
+void printAlgorithmStatus(){
+  uint8_t algoStatus = em7180.getAlgorithmStatus();
+    if (algoStatus & 0x01)
+      Serial.println(" EM7180 standby status");
+    if (algoStatus & 0x02)
+      Serial.println(" EM7180 algorithm slow");
+    if (algoStatus & 0x04)
+      Serial.println(" EM7180 in stillness mode");
+    if (algoStatus & 0x08)
+      Serial.println(" EM7180 mag calibration completed");
+    if (algoStatus & 0x10)
+      Serial.println(" EM7180 magnetic anomaly detected");
+    if (algoStatus & 0x20)
+      Serial.println(" EM7180 unreliable sensor data");
 }
 
 void printState(struct state deviceState)
@@ -699,15 +817,19 @@ void handleSerial()
     {
     case '1':
       learnedPoses[0] = currentQuaternion;
+      activePoseSlots[0] = true;
       break;
     case '2':
       learnedPoses[1] = currentQuaternion;
+      activePoseSlots[1] = true;
       break;
     case '3':
       learnedPoses[2] = currentQuaternion;
+      activePoseSlots[2] = true;
       break;
     case '4':
       learnedPoses[3] = currentQuaternion;
+      activePoseSlots[3] = true;
       break;
     }
   }
