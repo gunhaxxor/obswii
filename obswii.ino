@@ -92,8 +92,8 @@ struct state
   uint8_t rotary;
   uint8_t leds[5];
 };
-state deviceState[2];
-state pushState[2];
+volatile state deviceState[2];
+volatile state pushState[2];
 
 const int stateSize = sizeof(deviceState[0]);
 
@@ -325,10 +325,10 @@ void loop()
 
 void baseStationLoop()
 {
-  delay(100);
+  delay(10);
   if (useRadio)
   {
-    if (pollNode(0, 0, (uint8_t *)&pushState[currentNode], (uint8_t *)&deviceState[currentNode]))
+    if (pollNode(0, (uint8_t *)&pushState[currentNode], (uint8_t *)&deviceState[currentNode]))
     {
       printf("poll received\n");
       currentQuaternion.w = Q15ToFloat(deviceState[currentNode].quaternion.w);
@@ -357,6 +357,7 @@ void baseStationLoop()
   }
 
   calculateParameterWeights();
+  // radio.printDetails();
 
   if (true || sincePrint > printInterval)
   {
@@ -390,8 +391,29 @@ void baseStationLoop()
   handleSerial();
 }
 
+elapsedMillis sinceLastLoop = 0;
 void nodeLoop()
 {
+  noInterrupts();
+  if (radio.rxFifoFull())
+  {
+    Serial.print("RX FIFO FULL! Dummyreading. ");
+    uint8_t data[32] = {0};
+    while (radio.available())
+    {
+      printf("read. ");
+      radio.read(data, radio.getDynamicPayloadSize());
+    }
+    printf("\n");
+    // radio.printDetails();
+  }
+  interrupts();
+
+  unsigned long t = sinceLastLoop;
+  sinceLastLoop = 0;
+  // printf("loopTime %ul \n", t);
+  // printf(".\n");
+
   //handle all the inputs
   if (rotary.updated())
   {
@@ -427,6 +449,8 @@ void nodeLoop()
   if (sincePrint > printInterval)
   {
     sincePrint = 0;
+    // radio.printDetails();
+    // writeAckPacks((void *)&deviceState, stateSize);
   }
 }
 

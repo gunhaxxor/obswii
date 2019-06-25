@@ -148,7 +148,7 @@ void setupAcker(int nodeNr)
   radio.startListening();
 }
 
-bool pollNode(uint8_t node, uint8_t *commands, uint8_t *pushState, uint8_t *getState)
+bool pollNode(uint8_t node, uint8_t *pushState, uint8_t *getState)
 {
   // unsigned long startStamp = micros();
 
@@ -177,17 +177,17 @@ bool pollNode(uint8_t node, uint8_t *commands, uint8_t *pushState, uint8_t *getS
   }
 
   // printf("stop listening\n");
-  radio.stopListening();
-  // printf("opening normal pipe for writing request: %s \n", pipes[node]);
+  // radio.stopListening();
+  printf("opening normal pipe for writing request: %s \n", pipes[node]);
   radio.openWritingPipe(pipes[node]);
 
-  bool ok = radio.write(data, i + 1);
-  // printf("radio write returned %i \n", ok);
+  bool ok = radio.write(data, i);
+  printf("radio write returned %i \n", ok);
   uint8_t size;
   if (ok && handleReceivedAckPayload(getState, &size))
   {
     // updateStats(node, true, false, startStamp);
-    commandReceived[node] = true;
+    // commandReceived[node] = true;
 
     // if(size > 16){
     //   receivedPollPacketsOnPipe[receive[8].c[0]]++;
@@ -367,6 +367,7 @@ FASTRUN void radioInterrupt(void)
   // unsigned long IrqStartStamp = micros();
 
   // int bytesToSend = 30;
+  delayMicroseconds(400);
   int i = 0;
   uint8_t txData[32] = {0};
   txData[i++] = role;
@@ -374,14 +375,14 @@ FASTRUN void radioInterrupt(void)
   memcpy(&txData[2], (uint8_t *)&deviceState[role], stateSize);
   i += stateSize;
 
-  // radio.flush_tx();
-  radio.writeAckPayload(1, txData, i + 1);
-  radio.writeAckPayload(2, txData, i + 1);
-  radio.writeAckPayload(3, txData, i + 1);
+  radio.flush_tx();
+  radio.writeAckPayload(1, txData, i);
+  radio.writeAckPayload(2, txData, i);
+  radio.writeAckPayload(3, txData, i);
 
   bool tx, fail, rx;
   radio.whatHappened(tx, fail, rx); // What happened?
-  // uint8_t pipe;
+  uint8_t pipe;
   if (rx)
   { // Did we receive a message?
 
@@ -392,13 +393,13 @@ FASTRUN void radioInterrupt(void)
       printf("no message. This was probably a queued ISR.");
       return;
     }
-    while (radio.available())
+    while (radio.available(&pipe))
     {
       uint8_t size = radio.getDynamicPayloadSize();
       if (size != 0)
       {
         radio.read(rxData, size);
-        // printf("received payload of size: %i\n", size);
+        printf("received payload of size %i on pipe %i\n", size, pipe);
       }
       else
       {
@@ -421,7 +422,7 @@ FASTRUN void radioInterrupt(void)
     case 'n':
       // radioEstablished = true;
       //This was a normal request
-      // printf("This was a normal request\n");
+      printf("This was a normal request\n");
       break;
     default:
       // printf("corrupt request type was %c (char), %i (int) \n", rxData[0], rxData[0]);
@@ -529,19 +530,19 @@ bool waitForBridge(unsigned long timeout, uint8_t edge, uint8_t *link, binaryInt
 //Only call this function if you're prepared to discard packets laying in front of the expected ackPack in the rxfifo
 bool handleReceivedAckPayload(uint8_t *getState, uint8_t *size)
 {
-  // printf("handling ack payload\n");
+  printf("handling ack payload\n");
   uint8_t pipe;
   bool result = false;
   while (radio.available(&pipe))
   {
-    // printf("pack in pipe %i \n", pipe);
+    printf("pack in pipe %i \n", pipe);
     *size = radio.getDynamicPayloadSize();
     uint8_t receive[*size];
     radio.read(receive, *size);
     memcpy(getState, &receive[2], stateSize);
     if (pipe == 0)
     { // ack packs must come on pipe 0!
-      // printf("ack payload received from node %i with size %i and stamp: %i\n", receive[0], *size, receive[1]);
+      printf("ack payload received from node %i with size %i and stamp: %i\n", receive[0], *size, receive[1]);
       result = true;
       break;
     }
@@ -549,19 +550,34 @@ bool handleReceivedAckPayload(uint8_t *getState, uint8_t *size)
   return result;
 }
 
-// void writeAckPacks(binaryInt16* transmit, uint8_t len){
-//   // printf("writing ack payloads of size %i\n", len);
+void writeAckPacks(void *transmit, uint8_t len)
+{
+  // int i = 0;
+  // uint8_t txData[32] = {0};
+  // txData[i++] = role;
+  // txData[i++] = incSendStamp();
+  // memcpy(&txData[2], (uint8_t *)&deviceState[role], stateSize);
+  // i += stateSize;
 
-//   uint8_t data[16];
-//   data[0] = role;
-//   data[1] = incSendStamp();
-//   memcpy(&data[2], transmit, len-2);
+  // radio.flush_tx();
+  // radio.writeAckPayload(1, txData, i + 1);
+  // radio.writeAckPayload(2, txData, i + 1);
+  // radio.writeAckPayload(3, txData, i + 1);
+  ///////////
 
-//   radio.flush_tx();
-//   radio.writeAckPayload(1, data, len);
-//   radio.writeAckPayload(2, data, len);
-//   radio.writeAckPayload(3, data, len);
-// }
+  // printf("writing ack payloads of size %i\n", len);
+  int i = 0;
+  uint8_t data[32];
+  data[i++] = role;
+  data[i++] = incSendStamp();
+  memcpy(&data[2], transmit, len);
+  i += len;
+
+  radio.flush_tx();
+  radio.writeAckPayload(1, data, len);
+  radio.writeAckPayload(2, data, len);
+  radio.writeAckPayload(3, data, len);
+}
 
 uint8_t incSendStamp()
 {

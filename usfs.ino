@@ -2,7 +2,7 @@
 #include "usfs_registers.h"
 #include <i2c_t3.h>
 
-#define SerialDebug true
+#define SerialDebug false
 // General purpose variables
 int16_t serial_input;
 static int16_t warm_start = 0;
@@ -81,7 +81,7 @@ void EM7180_setup()
   Serial.println(" Should be: 0x02");
 
   // Give some time to read the screen
-  delay(1000);
+  // delay(1000);
 
   // Check which sensors can be detected by the EM7180
   uint8_t featureflag = readByte(EM7180_ADDRESS, EM7180_FeatureFlags);
@@ -99,7 +99,7 @@ void EM7180_setup()
     Serial.println("A third custom sensor is installed");
 
   // Give some time to read the screen
-  delay(1000);
+  // delay(1000);
 
   // Check SENtral status, make sure EEPROM upload of firmware was accomplished
   byte STAT = (readByte(EM7180_ADDRESS, EM7180_SentralStatus) & 0x01);
@@ -171,7 +171,7 @@ void EM7180_setup()
   // Reset Sentral after
 
   // Give some time to read the screen
-  delay(1000);
+  // delay(1000);
 
   // Set SENtral in initialized state to configure registers
   writeByte(EM7180_ADDRESS, EM7180_HostControl, 0x00);
@@ -332,7 +332,7 @@ void EM7180_setup()
     Serial.println(" EM7180 new gyro result");
 
   // Give some time to read the screen
-  delay(1000);
+  // delay(1000);
 
   // Check sensor status
   uint8_t sensorStatus = readByte(EM7180_ADDRESS, EM7180_SensorStatus);
@@ -370,7 +370,7 @@ void EM7180_setup()
   Serial.println("");
 
   // Give some time to read the screen
-  delay(1000);
+  // delay(1000);
 }
 
 void EM7180_loop()
