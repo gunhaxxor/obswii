@@ -45,7 +45,7 @@ const int nrOfNodes = 2;
 const char *role_friendly_name[] = {"Node 0", "Node 1", "BaseStation"};
 const int baseStation = nrOfNodes;
 //if radio is not used the imu data will be spewed directly to serial port, rather than sent over radio.
-const bool useRadio = true;
+bool useRadio = true;
 //Is nrf chip on pin 14? This configuration only applies if role is set manually (not autoRole)
 // const bool NRFOnPin14 = false;
 
@@ -98,7 +98,7 @@ state pushState[2];
 const int stateSize = sizeof(deviceState[0]);
 
 //Orientation sensor stuff
-quaternion currentQuaternion;
+quaternion currentQuaternion = {1.0f, 0, 0, 0};
 const int nrOfPoseSlots = 10;
 quaternion learnedPoses[nrOfPoseSlots] = {0};
 
@@ -255,7 +255,6 @@ void setup()
     {
       pinMode(ledPins[i], OUTPUT);
     }
-
   }
 
   SPI.setSCK(RADIO_SCK_pin);
@@ -268,6 +267,7 @@ void setup()
   }
   else
   {
+    EM7180_setup();
   }
 
   //Radio Stuff!
@@ -326,14 +326,21 @@ void loop()
 void baseStationLoop()
 {
   delay(100);
-
-  if (pollNode(0, 0, (uint8_t *)&pushState[currentNode], (uint8_t *)&deviceState[currentNode]))
+  if (useRadio)
   {
-    printf("poll received\n");
-  }
-  else
-  {
-    printf("pollnode failed\n");
+    if (pollNode(0, 0, (uint8_t *)&pushState[currentNode], (uint8_t *)&deviceState[currentNode]))
+    {
+      printf("poll received\n");
+      currentQuaternion.w = Q15ToFloat(deviceState[currentNode].quaternion.w);
+      currentQuaternion.x = Q15ToFloat(deviceState[currentNode].quaternion.x);
+      currentQuaternion.y = Q15ToFloat(deviceState[currentNode].quaternion.y);
+      currentQuaternion.z = Q15ToFloat(deviceState[currentNode].quaternion.z);
+      currentQuaternion = quat_norm(currentQuaternion);
+    }
+    else
+    {
+      printf("pollnode failed\n");
+    }
   }
 
   for (size_t i = 0; i < nrOfLeds; i++)
@@ -349,11 +356,6 @@ void baseStationLoop()
     // memcpy(pushState, deviceState, stateSize);
   }
 
-  currentQuaternion.w = Q14ToFloat(deviceState[currentNode].quaternion.w);
-  currentQuaternion.x = Q14ToFloat(deviceState[currentNode].quaternion.x);
-  currentQuaternion.y = Q14ToFloat(deviceState[currentNode].quaternion.y);
-  currentQuaternion.z = Q14ToFloat(deviceState[currentNode].quaternion.z);
-
   calculateParameterWeights();
 
   if (true || sincePrint > printInterval)
@@ -365,13 +367,17 @@ void baseStationLoop()
     // float learnedQuat[4] = {currentQuaternion.w, currentQuaternion.x, currentQuaternion.y, currentQuaternion.z};
     // float learnedQuat[4] = {learnedPoses[0].w, learnedPoses[0].x, learnedPoses[0].y, learnedPoses[0].z};
     Serial.println("current -----");
-    printQuaternion((quat_uniform_w(currentQuaternion)));
-    float currentAngle = quat_angle(quat_uniform_w(currentQuaternion));
+    printQuaternion(((currentQuaternion)));
+    float currentAngle = quat_angle((currentQuaternion));
     printf("angle: %f \n", toDegrees(currentAngle));
     Serial.println("learned ----- ");
     printQuaternion(learnedPoses[0]);
     float learnedAngle = quat_angle(learnedPoses[0]);
     printf("angle: %f \n", toDegrees(learnedAngle));
+
+    quaternion deltaQ = quat_delta_rotation(currentQuaternion, learnedPoses[0]);
+    Serial.println("delta ----- ");
+    printQuaternion(deltaQ);
 
     float angle = quat_angle(currentQuaternion, learnedPoses[0]);
     printf("delta angle: %f \n", toDegrees(angle));
@@ -398,7 +404,7 @@ void nodeLoop()
   deviceState[role].rotaryButton = encButton.value;
   deviceState[role].shake = shakeSensor.value;
 
-  //syn the leds in deviceState to the ones in received pushState
+  //sync the leds in deviceState to the ones in received pushState
   for (size_t i = 0; i < nrOfLeds; i++)
   {
     deviceState[role].leds[i] = pushState[role].leds[i];
@@ -409,96 +415,116 @@ void nodeLoop()
     digitalWrite(ledPins[i], deviceState[role].leds[i] % 2);
   }
 
+  EM7180_loop();
+  float q[4];
+  memcpy(q, EM7180_getQuaternion(), 4 * sizeof(float));
+  // printf("-------------- %f, %f, %f, %f \n", q[0], q[1], q[2], q[3]);
+  deviceState[role].quaternion.w = floatToQ15(q[0]);
+  deviceState[role].quaternion.x = floatToQ15(q[1]);
+  deviceState[role].quaternion.y = floatToQ15(q[2]);
+  deviceState[role].quaternion.z = floatToQ15(q[3]);
+
   if (sincePrint > printInterval)
   {
     sincePrint = 0;
   }
 }
 
-const float clampAngle = 5;
+const float clampAngle = 10;
 bool activePoseSlots[nrOfPoseSlots] = {0};
-bool fullyTriggeredPoses[nrOfPoseSlots]  {0};
+bool fullyTriggeredPoses[nrOfPoseSlots]{0};
 float parameterWeights[nrOfPoseSlots] = {0};
 float distances[nrOfPoseSlots] = {0};
 float clampedDistances[nrOfPoseSlots] = {0};
-void calculateParameterWeights(){
+void calculateParameterWeights()
+{
   float invertedDistancesSum = 0.f;
   float InvertedDistances[nrOfPoseSlots] = {0};
   bool anyPoseIsFullyTriggered = false;
   for (size_t i = 0; i < nrOfPoseSlots; i++)
   {
-    if(activePoseSlots[i]){
+    if (activePoseSlots[i])
+    {
       distances[i] = toDegrees(quat_angle(currentQuaternion, learnedPoses[i]));
-      if(distances[i] < clampAngle){
+      if (distances[i] < clampAngle)
+      {
         fullyTriggeredPoses[i] = true;
         anyPoseIsFullyTriggered = true;
-      }else{
+      }
+      else
+      {
         fullyTriggeredPoses[i] = false;
       }
     }
   }
 
-  if(anyPoseIsFullyTriggered){
+  if (anyPoseIsFullyTriggered)
+  {
     for (size_t i = 0; i < nrOfPoseSlots; i++)
     {
-      if(activePoseSlots[i]){
-        if(fullyTriggeredPoses[i]){
-          InvertedDistances[i] = 1.0f/distances[i];
+      if (activePoseSlots[i])
+      {
+        if (fullyTriggeredPoses[i])
+        {
+          if (distances[i] < 0.001f)
+          {
+            InvertedDistances[i] = INFINITY;
+          }
+          else
+          {
+            InvertedDistances[i] = 1.0f / distances[i];
+          }
           invertedDistancesSum += InvertedDistances[i];
-        }else{
+        }
+        else
+        {
           InvertedDistances[i] = 0.0f;
         }
       }
     }
-  }else{
+  }
+  else
+  {
     for (size_t i = 0; i < nrOfPoseSlots; i++)
     {
-      if(activePoseSlots[i]){
+      if (activePoseSlots[i])
+      {
         clampedDistances[i] = distances[i] - clampAngle;
-        InvertedDistances[i] = 1.0f/clampedDistances[i];
+        InvertedDistances[i] = 1.0f / clampedDistances[i];
         invertedDistancesSum += InvertedDistances[i];
       }
     }
   }
 
-
   for (size_t i = 0; i < nrOfPoseSlots; i++)
   {
-    if(activePoseSlots[i]){
+    if (activePoseSlots[i])
+    {
       parameterWeights[i] = InvertedDistances[i] / invertedDistancesSum;
     }
   }
 }
 
-// const float poseClampThreshold = 0.9f;
-// const float poseClampMultiplier = 1.0f/poseClampThreshold;
-// void clampParameterWeights(){
-//   for (size_t i = 0; i < nrOfPoseSlots; i++)
-//   {
-//     if(activePoseSlots[i]){
-//       if(parameterWeights[i] > poseClampThreshold){
-
-//       }
-//     }
-//   }
-// }
-
-void printAngleDistances(){
+void printAngleDistances()
+{
   printf("angleDistances: ");
   for (size_t i = 0; i < nrOfPoseSlots; i++)
   {
-    if(activePoseSlots[i]){
+    if (activePoseSlots[i])
+    {
       printf("%f, ", distances[i]);
     }
   }
   Serial.println();
 }
 
-void printParameterWeights(){
+void printParameterWeights()
+{
   printf("parameterWeights: ");
   for (size_t i = 0; i < nrOfPoseSlots; i++)
   {
-    if(activePoseSlots[i]){
+    if (activePoseSlots[i])
+    {
       printf("%f, ", parameterWeights[i]);
     }
   }
@@ -509,7 +535,7 @@ void printState(struct state deviceState)
 {
   printf("nodeId\t %i \n", deviceState.nodeId);
   printf("messageCounter\t %i \n", deviceState.updateCounter);
-  printf("quaternion\t %f,%f,%f,%f \n", Q14ToFloat(deviceState.quaternion.w), Q14ToFloat(deviceState.quaternion.x), Q14ToFloat(deviceState.quaternion.y), Q14ToFloat(deviceState.quaternion.z));
+  printf("quaternion\t %f,%f,%f,%f \n", Q15ToFloat(deviceState.quaternion.w), Q15ToFloat(deviceState.quaternion.x), Q15ToFloat(deviceState.quaternion.y), Q15ToFloat(deviceState.quaternion.z));
   for (size_t buttonIndex = 0; buttonIndex < nrOfButtons; buttonIndex++)
   {
     printf("button %i\t %i \n", buttonIndex, deviceState.buttons[buttonIndex]);
@@ -550,6 +576,9 @@ void handleSerial()
     case '4':
       learnedPoses[3] = currentQuaternion;
       activePoseSlots[3] = true;
+      break;
+    case 'r':
+      useRadio = !useRadio;
       break;
     }
   }

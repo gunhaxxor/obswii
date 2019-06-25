@@ -150,7 +150,7 @@ void setupAcker(int nodeNr)
 
 bool pollNode(uint8_t node, uint8_t *commands, uint8_t *pushState, uint8_t *getState)
 {
-  unsigned long startStamp = micros();
+  // unsigned long startStamp = micros();
 
   // radio.setChannel(startChannel + node * channelSpread);
   //

@@ -54,14 +54,14 @@ inline uint8_t maxByte(uint8_t a, uint8_t b) { return (a > b ? a : b); }
 
 inline uint8_t minByte(uint8_t a, uint8_t b) { return (a < b ? a : b); }
 
-inline int16_t floatToQ14(float value)
+inline int16_t floatToQ15(float value)
 {
-  return value * (0x01 << 14);
+  return value * (0x01 << 15);
 }
 
-inline float Q14ToFloat(int16_t value)
+inline float Q15ToFloat(int16_t value)
 {
-  return ((float)value) / (0x01 << 14);
+  return ((float)value) / (0x01 << 15);
 }
 
 inline int numberOfSetBits(uint32_t i)
@@ -183,11 +183,6 @@ inline vec3 quat_rotate(quaternion q, vec3 vecIn)
   return vec3{out4.x, out4.y, out4.z};
 }
 
-// inline void quat_copy(const float *q, float *qOut)
-// {
-//   memcpy(qOut, &q[0], 4 * sizeof(float));
-// }
-
 //calculates the relative rotation from q1 to q2
 inline quaternion quat_delta_rotation(quaternion q1, quaternion q2)
 {
@@ -215,22 +210,22 @@ inline float quat_angle(quaternion q)
 {
 
   //  Here's another formula taken from openFrameworks
-  //  float sinhalfangle = sqrt( q[1] * q[1] + q[2] * q[2] + q[3] * q[3] );
-  //  result = 2.0 * atan2( sinhalfangle, q[0] );
+  float sinhalfangle = sqrt(q.x * q.x + q.y * q.y + q.z * q.z);
+  float result = 2.0 * atan2(sinhalfangle, q.w);
   //==================================================//
 
-  //Clamp value of w within -1 to 1
-  float w = q.w;
-  if (w > 1.0f)
-  {
-    w = 1.0;
-  }
-  else if (w < -1.0f)
-  {
-    w = -1.0;
-  }
+  // //Clamp value of w within -1 to 1
+  // float w = q.w;
+  // if (w > 1.0f)
+  // {
+  //   w = 1.0;
+  // }
+  // else if (w < -1.0f)
+  // {
+  //   w = -1.0;
+  // }
 
-  float result = 2.0f * acos(w);
+  // float result = 2.0f * acos(w);
   //clamp to shortest angle (180 degrees)
   // if (result > PI)
   // {
@@ -243,6 +238,7 @@ inline float quat_angle(quaternion q)
 inline float quat_angle(const quaternion q1, const quaternion q2)
 {
   return quat_angle(quat_uniform_w(quat_delta_rotation((q1), (q2))));
+  // return quat_angle((quat_delta_rotation((q1), (q2))));
 }
 
 inline void quat_axis(const float *q, float *vecOut)
