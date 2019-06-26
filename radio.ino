@@ -160,13 +160,15 @@ bool pollNode(uint8_t node, uint8_t *pushState, uint8_t *getState)
   data[i++] = millis(); //unique dummy data. Edge goes here in relay requests
   // memcpy(&data[i], commands, commandArraySize);
   // i += commandArraySize;
+  pushState[0] = currentNode;
+  pushState[1] = incSendStamp();
   memcpy(&data[i], pushState, stateSize);
   i += stateSize;
   // data[i++] = command[0]; //Chosen sensor
   // data[i++] = command[1]; //Color
   // data[i++] = command[2]; //Brightness
   // data[i++] = command[3]; //Vibration motor counter
-  data[i++] = incSendStamp();
+  // data[i++] = incSendStamp();
   // data[4] = (millis() >> 8);
   // data[5] = (millis() >> 16);
 
@@ -178,11 +180,11 @@ bool pollNode(uint8_t node, uint8_t *pushState, uint8_t *getState)
 
   // printf("stop listening\n");
   // radio.stopListening();
-  printf("opening normal pipe for writing request: %s \n", pipes[node]);
+  // printf("opening normal pipe for writing request: %s \n", pipes[node]);
   radio.openWritingPipe(pipes[node]);
 
   bool ok = radio.write(data, i);
-  printf("radio write returned %i \n", ok);
+  // printf("radio write returned %i \n", ok);
   uint8_t size;
   if (ok && handleReceivedAckPayload(getState, &size))
   {
@@ -372,6 +374,8 @@ FASTRUN void radioInterrupt(void)
   uint8_t txData[32] = {0};
   txData[i++] = role;
   txData[i++] = incSendStamp();
+  deviceState[role].nodeId = role;
+  deviceState[role].updateCounter = incSendStamp();
   memcpy(&txData[2], (uint8_t *)&deviceState[role], stateSize);
   i += stateSize;
 
@@ -399,7 +403,7 @@ FASTRUN void radioInterrupt(void)
       if (size != 0)
       {
         radio.read(rxData, size);
-        printf("received payload of size %i on pipe %i\n", size, pipe);
+        // printf("received payload of size %i on pipe %i\n", size, pipe);
       }
       else
       {
@@ -422,7 +426,7 @@ FASTRUN void radioInterrupt(void)
     case 'n':
       // radioEstablished = true;
       //This was a normal request
-      printf("This was a normal request\n");
+      // printf("This was a normal request\n");
       break;
     default:
       // printf("corrupt request type was %c (char), %i (int) \n", rxData[0], rxData[0]);
@@ -530,19 +534,19 @@ bool waitForBridge(unsigned long timeout, uint8_t edge, uint8_t *link, binaryInt
 //Only call this function if you're prepared to discard packets laying in front of the expected ackPack in the rxfifo
 bool handleReceivedAckPayload(uint8_t *getState, uint8_t *size)
 {
-  printf("handling ack payload\n");
+  // printf("handling ack payload\n");
   uint8_t pipe;
   bool result = false;
   while (radio.available(&pipe))
   {
-    printf("pack in pipe %i \n", pipe);
+    // printf("pack in pipe %i \n", pipe);
     *size = radio.getDynamicPayloadSize();
     uint8_t receive[*size];
     radio.read(receive, *size);
     memcpy(getState, &receive[2], stateSize);
     if (pipe == 0)
     { // ack packs must come on pipe 0!
-      printf("ack payload received from node %i with size %i and stamp: %i\n", receive[0], *size, receive[1]);
+      // printf("ack payload received from node %i with size %i and stamp: %i\n", receive[0], *size, receive[1]);
       result = true;
       break;
     }

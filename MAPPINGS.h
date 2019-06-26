@@ -35,22 +35,24 @@
 #define SHAKESENSOR_MIDIVALUE 67
 
 //pinout for the buttons
-#define BUTTON1_pin 6
-#define BUTTON2_pin 5
-#define BUTTON3_pin 4
-#define BUTTON4_pin 3
-#define BUTTON5_pin 2
+#define BUTTON1_pin 7
+#define BUTTON2_pin 6
+#define BUTTON3_pin 5
+#define BUTTON4_pin 4
+#define BUTTON5_pin 3
 
 //leds
-#define LED_pin0 29
-#define LED_pin1 30
+#define LED_pin0 30
+#define LED_pin1 29
 #define LED_pin2 36
 #define LED_pin3 37
 #define LED_pin4 38
 
-#define ENCBUTTON_pin 34
-#define SHAKESENSOR_pin 32
+#define ENCBUTTON_pin 32
+#define ENCBUTTON_groundPin 31
+// #define SHAKESENSOR_pin 32
 
+#define ROTARY_groundPin 34
 #define ROTARY_pin1 33
 #define ROTARY_pin2 35
 #define ROTARY_MIDIVALUE 68

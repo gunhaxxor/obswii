@@ -72,12 +72,12 @@ const unsigned long relayDuration = 250;
 // binaryInt16 receivedData[16] = {0};
 // binaryInt16 receivedRelayData[16] = {0};
 
-const int commandArraySize = 0;
-uint8_t currentCommands[nrOfNodes][commandArraySize];
-bool commandReceived[nrOfNodes];
+// const int commandArraySize = 0;
+// uint8_t currentCommands[nrOfNodes][commandArraySize];
+// bool commandReceived[nrOfNodes];
 //node
 // volatile binaryInt16 transmitData[23] = {0}; //Should never be filled with more than 30 bytes, but make it bigger in case.
-volatile uint8_t receivedCommands[commandArraySize];
+// volatile uint8_t receivedCommands[commandArraySize];
 
 struct state
 { //Be sure to make this struct aligned!!
@@ -91,13 +91,13 @@ struct state
     int16_t z;
   } quaternion;
   uint8_t buttons[5];
-  uint8_t shake;
+  // uint8_t shake;
   uint8_t rotaryButton;
   uint8_t rotary;
   uint8_t leds[5];
 };
-volatile state deviceState[2];
-volatile state pushState[2];
+state deviceState[2];
+state pushState[2];
 
 const int stateSize = sizeof(deviceState[0]);
 
@@ -168,9 +168,9 @@ Button_Class encButton = Button_Class(ENCBUTTON_pin, BOUNCEDURATION, ENCBUTTON_T
 void encButtonInterrupt() { encButton.interrupt(); }
 // const int encButtonGroundPin = 30;
 
-void shakeSensorInterrupt();
-Button_Class shakeSensor = Button_Class(SHAKESENSOR_pin, BOUNCEDURATION, SHAKESENSOR_TOGGLE, shakeSensorInterrupt);
-void shakeSensorInterrupt() { shakeSensor.interrupt(); }
+// void shakeSensorInterrupt();
+// Button_Class shakeSensor = Button_Class(SHAKESENSOR_pin, BOUNCEDURATION, SHAKESENSOR_TOGGLE, shakeSensorInterrupt);
+// void shakeSensorInterrupt() { shakeSensor.interrupt(); }
 // const int shakeSensorGroundPin = 28;
 
 Knob_Class rotary = Knob_Class(ROTARY_pin1, ROTARY_pin2);
@@ -201,6 +201,8 @@ void setup()
   Serial.begin(115200);
   printf("Starting OBSWII firmware\n");
 
+  pinMode(13, OUTPUT);
+
   //ROLE. Do this first so everything that relies on it works properly
   if (role == autoRole)
   {
@@ -218,38 +220,23 @@ void setup()
       }
     }
   }
-
-  // if (role == autoRole)
-  // {
-  //   role = 0;
-  //   //Reads the pins 0-1 as a binary bcd number.
-  //   for (int i = 0; i < 1; ++i)
-  //   {
-  //     pinMode(i, INPUT_PULLUP);
-  //     delay(2);
-  //     if (!digitalRead(i))
-  //     {
-  //       role = role | 1 << i;
-  //     }
-  //   }
-  //   //The pin config starts with node 0 having bcd 1. So, decrease with one to align index.
-  //   role--;
-  //   //If we are negative after reading pins and aligning index, that means we had bcd 0 = baseStation.
-  //   if (role < 0)
-  //     role = baseStation;
-  // }
-
-  delay(1600);
+  
   printf("ROLE: %s\n\r", role_friendly_name[role]);
-
-  if (role != baseStation)
+  
+  if (role == baseStation)
+  {
+    //MIDI STUFF
+    usbMIDI.setHandleControlChange(onControlChange);
+    usbMIDI.setHandleNoteOn(onNoteOn);
+  }
+  else
   {
     //Configure peripherals and ground pins (really hope the pins are capabe of sinking enough current!!!!)
-    // configurePinAsGround(rotaryGroundPin);
+    configurePinAsGround(ROTARY_groundPin);
     rotary.init();
     // configurePinAsGround(shakeSensorGroundPin);
-    shakeSensor.init();
-    // configurePinAsGround(encButtonGroundPin);
+    // shakeSensor.init();
+    configurePinAsGround(ENCBUTTON_groundPin);
     encButton.init();
 
     // configurePinAsGround(buttonsGroundPin);
@@ -276,22 +263,14 @@ void setup()
     }
   }
 
-  SPI.setSCK(RADIO_SCK_pin);
-  SPI.setMOSI(RADIO_MOSI_pin);
-  SPI.setMISO(RADIO_MISO_pin);
-  // radioIRQPin = RADIO_INT_pin;
-
-  if (role == baseStation)
-  {
-  }
-  else
-  {
-  }
-
   //Radio Stuff!
   if (useRadio)
   {
     printf("Setting up radio\n");
+    SPI.setSCK(RADIO_SCK_pin);
+    SPI.setMOSI(RADIO_MOSI_pin);
+    SPI.setMISO(RADIO_MISO_pin);
+    // radioIRQPin = RADIO_INT_pin;
     commonSetup();
     if (role == baseStation)
     {
@@ -309,7 +288,88 @@ void setup()
 
   now = millis();
   interrupts();
-  delay(2500);
+  // delay(2500);
+}
+
+void onNoteOn(byte channel, byte note, byte velocity){
+  digitalWrite(13, !digitalRead(13));
+}
+
+bool recordControlChanges = true;
+struct controlChange {
+  bool active;
+  int cc;
+  int value;
+};
+// const int nrOfControlChanges = 15
+const int nrOfCCs = 128;
+controlChange controlChanges[nrOfCCs] = {0};
+void onControlChange(byte channel, byte control, byte value){
+  // digitalWrite(13, !digitalRead(13));
+  digitalWrite(13, HIGH);
+  //midiThru
+  usbMIDI.sendControlChange(control, value, channel);
+  // printf("control change received\n");
+  if(recordControlChanges && !controlChanges[control].active){
+    printf("recording CC number %i \n", control);
+    controlChanges[control].active = true;
+    controlChanges[control].cc = control;
+  }
+  controlChanges[control].value = value;
+}
+
+const int maxNrOfCCsInParameterGroup = 15;
+struct parameterGroupState {
+  int slot;
+  bool active;
+  quaternion savedPose;
+  controlChange savedControlChanges[maxNrOfCCsInParameterGroup];
+};
+
+const int nrOfParameterGroups = 10;
+parameterGroupState savedParameterGroups[nrOfParameterGroups] = {0};
+void saveParameterGroup(int slot){
+  savedParameterGroups[slot].active = true;
+  savedParameterGroups[slot].slot = slot;
+  savedParameterGroups[slot].savedPose = currentQuaternion;
+
+  //save the recorded cc values
+  int k = 0;
+  for (size_t i = 0; i < nrOfCCs; i++)
+  {
+    if(controlChanges[i].active){
+      savedParameterGroups[slot].savedControlChanges[k] = controlChanges[i];
+      k++;
+    }
+  }
+  //clear the rest of the cc slots in this param group
+  while(k < maxNrOfCCsInParameterGroup){
+    savedParameterGroups[slot].savedControlChanges[k].active = false;
+    k++;
+  }
+  
+};
+
+void printSavedParameterGroups(){
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if(savedParameterGroups[i].active){
+      printParameterGroup(savedParameterGroups[i]);
+    }
+  }
+}
+
+void printParameterGroup(struct parameterGroupState paramGroup){
+  // printf("parameter group slot %i \n", &paramGroup->)
+  printf("savedParamGroup slot %i -------------\n", paramGroup.slot);
+  printf("w: %f, x:%f, y:%f, z:%f  \n", paramGroup.savedPose.w, paramGroup.savedPose.x, paramGroup.savedPose.y, paramGroup.savedPose.z);
+  for (size_t i = 0; i < maxNrOfCCsInParameterGroup; i++)
+  {
+    if(paramGroup.savedControlChanges[i].active){
+      printf("%i: control=%i \t value=%i \n", i, paramGroup.savedControlChanges[i].cc, paramGroup.savedControlChanges[i].value);
+    }
+  }
+  
 }
 
 void loop()
@@ -343,12 +403,14 @@ void loop()
 
 void baseStationLoop()
 {
-  delay(10);
+  digitalWrite(13, LOW);
+  usbMIDI.read();
+  // delay(10);
   if (useRadio)
   {
     if (pollNode(0, (uint8_t *)&pushState[currentNode], (uint8_t *)&deviceState[currentNode]))
     {
-      printf("poll received\n");
+      // printf("poll received\n");
       currentQuaternion.w = Q15ToFloat(deviceState[currentNode].quaternion.w);
       currentQuaternion.x = Q15ToFloat(deviceState[currentNode].quaternion.x);
       currentQuaternion.y = Q15ToFloat(deviceState[currentNode].quaternion.y);
@@ -357,7 +419,7 @@ void baseStationLoop()
     }
     else
     {
-      printf("pollnode failed\n");
+      // printf("pollnode failed\n");
     }
   }
 
@@ -365,42 +427,46 @@ void baseStationLoop()
   {
     if (pushState[currentNode].leds[i] != deviceState[currentNode].buttons[i])
     {
-      int value = pushState[currentNode].leds[i] = deviceState[currentNode].buttons[i];
-      value %= 2;
-      printf("Changed button %i\n", i);
+      int value = deviceState[currentNode].buttons[i] % 2;
+      pushState[currentNode].leds[i] = value? 200: 0;
+      // printf("Changed button %i\n", i);
       // usbMIDI.sendControlChange(60 + i, value * 127, MIDICHANNEL);
     }
     // deviceState[currentNode].leds[i] = pushState[currentNode].leds[i];
     // memcpy(pushState, deviceState, stateSize);
   }
 
+  recordControlChanges = deviceState[currentNode].buttons[0]%2;
+
   calculateParameterWeights();
   // radio.printDetails();
 
-  if (true || sincePrint > printInterval)
+  if (sincePrint > printInterval)
   {
     sincePrint = 0;
     // printState(deviceState[currentNode]);
 
-    Serial.println("current -----");
-    printQuaternion(((currentQuaternion)));
-    float currentAngle = quat_angle((currentQuaternion));
-    printf("angle: %f \n", toDegrees(currentAngle));
-    Serial.println("learned ----- ");
-    printQuaternion(learnedPoses[0]);
-    float learnedAngle = quat_angle(learnedPoses[0]);
-    printf("angle: %f \n", toDegrees(learnedAngle));
+    // Serial.println("current -----");
+    // printQuaternion(((currentQuaternion)));
+    // float currentAngle = quat_angle((currentQuaternion));
+    // printf("angle: %f \n", toDegrees(currentAngle));
+    // Serial.println("learned ----- ");
+    // printQuaternion(learnedPoses[0]);
+    // float learnedAngle = quat_angle(learnedPoses[0]);
+    // printf("angle: %f \n", toDegrees(learnedAngle));
 
-    quaternion deltaQ = quat_delta_rotation(currentQuaternion, learnedPoses[0]);
-    Serial.println("delta ----- ");
-    printQuaternion(deltaQ);
+    // quaternion deltaQ = quat_delta_rotation(currentQuaternion, learnedPoses[0]);
+    // Serial.println("delta ----- ");
+    // printQuaternion(deltaQ);
 
-    float angle = quat_angle(currentQuaternion, learnedPoses[0]);
-    printf("delta angle: %f \n", toDegrees(angle));
-    Serial.println();
+    // float angle = quat_angle(currentQuaternion, learnedPoses[0]);
+    // printf("delta angle: %f \n", toDegrees(angle));
+    // Serial.println();
 
-    printAngleDistances();
-    printParameterWeights();
+    // printAngleDistances();
+    // printParameterWeights();
+
+    printSavedParameterGroups();
   }
 
   handleSerial();
@@ -439,7 +505,7 @@ void nodeLoop()
     deviceState[role].buttons[i] = button[i].value;
   }
   deviceState[role].rotaryButton = encButton.value;
-  deviceState[role].shake = shakeSensor.value;
+  // deviceState[role].shake = shakeSensor.value;
 
   //sync the leds in deviceState to the ones in received pushState
   for (size_t i = 0; i < nrOfLeds; i++)
@@ -449,7 +515,9 @@ void nodeLoop()
   //Now set the leds from the deviceState (which should be updated by received radio mesage)
   for (size_t i = 0; i < nrOfLeds; i++)
   {
-    digitalWrite(ledPins[i], deviceState[role].leds[i] % 2);
+    // float scaler = (sin((float)millis()/1500.f) + 1)/2.f;
+    // scaler = 1.f + scaler;
+    analogWrite(ledPins[i], deviceState[role].leds[i]);
   }
 
   quat = bno.getQuat();
@@ -475,9 +543,9 @@ void nodeLoop()
 const float clampAngle = 10;
 bool activePoseSlots[nrOfPoseSlots] = {0};
 bool fullyTriggeredPoses[nrOfPoseSlots]{0};
-float parameterWeights[nrOfPoseSlots] = {0};
 float distances[nrOfPoseSlots] = {0};
 float clampedDistances[nrOfPoseSlots] = {0};
+float parameterWeights[nrOfPoseSlots] = {0};
 void calculateParameterWeights()
 {
   float invertedDistancesSum = 0.f;
@@ -582,7 +650,7 @@ void printState(struct state deviceState)
   {
     printf("button %i\t %i \n", buttonIndex, deviceState.buttons[buttonIndex]);
   }
-  printf("shake\t %i \n", deviceState.shake);
+  // printf("shake\t %i \n", deviceState.shake);
   printf("rotaryButton\t %i \n", deviceState.rotaryButton);
   printf("rotary\t %i \n", deviceState.rotary);
   for (size_t ledIndex = 0; ledIndex < nrOfLeds; ledIndex++)
@@ -604,23 +672,30 @@ void handleSerial()
     switch (c)
     {
     case '1':
-      learnedPoses[0] = currentQuaternion;
-      activePoseSlots[0] = true;
+      // learnedPoses[0] = currentQuaternion;
+      // activePoseSlots[0] = true;
+      saveParameterGroup(0);
       break;
     case '2':
-      learnedPoses[1] = currentQuaternion;
-      activePoseSlots[1] = true;
+      // learnedPoses[1] = currentQuaternion;
+      // activePoseSlots[1] = true;
+      saveParameterGroup(1);
       break;
     case '3':
-      learnedPoses[2] = currentQuaternion;
-      activePoseSlots[2] = true;
+      // learnedPoses[2] = currentQuaternion;
+      // activePoseSlots[2] = true;
+      saveParameterGroup(2);
       break;
     case '4':
-      learnedPoses[3] = currentQuaternion;
-      activePoseSlots[3] = true;
+      // learnedPoses[3] = currentQuaternion;
+      // activePoseSlots[3] = true;
+      saveParameterGroup(3);
       break;
     case 'r':
       useRadio = !useRadio;
+      break;
+    case 'l':
+      recordControlChanges = !recordControlChanges;
       break;
     }
   }
