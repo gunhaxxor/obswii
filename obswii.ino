@@ -18,6 +18,10 @@
 #include "nRF24L01.h"
 #include "RF24.h"
 
+#include <i2c_t3.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055_t3.h>
+
 unsigned long now = 0;
 
 //predefine
@@ -98,6 +102,9 @@ volatile state pushState[2];
 const int stateSize = sizeof(deviceState[0]);
 
 //Orientation sensor stuff
+Adafruit_BNO055 bno = Adafruit_BNO055(WIRE_BUS, -1, BNO055_ADDRESS_B, I2C_MASTER, I2C_PINS_16_17, I2C_PULLUP_EXT, I2C_RATE_400);
+imu::Quaternion quat;
+// I2C_PINS_16_17, I2C_PULLUP_EXT, I2C_RATE_400
 quaternion currentQuaternion = {1.0f, 0, 0, 0};
 const int nrOfPoseSlots = 10;
 quaternion learnedPoses[nrOfPoseSlots] = {0};
@@ -255,6 +262,18 @@ void setup()
     {
       pinMode(ledPins[i], OUTPUT);
     }
+
+    // EM7180_setup();
+    // Wire.begin(I2C_MASTER, 0x00, I2C_PINS_16_17, I2C_PULLUP_EXT, I2C_RATE_400);
+    if (bno.begin())
+    {
+      bno.setExtCrystalUse(false);
+    }
+    else
+    {
+      /* There was a problem detecting the BNO055 ... check your connections */
+      printf("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
+    }
   }
 
   SPI.setSCK(RADIO_SCK_pin);
@@ -267,7 +286,6 @@ void setup()
   }
   else
   {
-    EM7180_setup();
   }
 
   //Radio Stuff!
@@ -364,9 +382,6 @@ void baseStationLoop()
     sincePrint = 0;
     // printState(deviceState[currentNode]);
 
-    // float currentQuat[4] = {currentQuaternion.w, currentQuaternion.x, currentQuaternion.y, currentQuaternion.z};
-    // float learnedQuat[4] = {currentQuaternion.w, currentQuaternion.x, currentQuaternion.y, currentQuaternion.z};
-    // float learnedQuat[4] = {learnedPoses[0].w, learnedPoses[0].x, learnedPoses[0].y, learnedPoses[0].z};
     Serial.println("current -----");
     printQuaternion(((currentQuaternion)));
     float currentAngle = quat_angle((currentQuaternion));
@@ -437,14 +452,17 @@ void nodeLoop()
     digitalWrite(ledPins[i], deviceState[role].leds[i] % 2);
   }
 
-  EM7180_loop();
-  float q[4];
-  memcpy(q, EM7180_getQuaternion(), 4 * sizeof(float));
-  // printf("-------------- %f, %f, %f, %f \n", q[0], q[1], q[2], q[3]);
-  deviceState[role].quaternion.w = floatToQ15(q[0]);
-  deviceState[role].quaternion.x = floatToQ15(q[1]);
-  deviceState[role].quaternion.y = floatToQ15(q[2]);
-  deviceState[role].quaternion.z = floatToQ15(q[3]);
+  quat = bno.getQuat();
+  // EM7180_loop();
+  // float q[4];
+  // memcpy(q, EM7180_getQuaternion(), 4 * sizeof(float));
+  // // printf("-------------- %f, %f, %f, %f \n", q[0], q[1], q[2], q[3]);
+  deviceState[role].quaternion.w = floatToQ15((float)quat.w());
+  deviceState[role].quaternion.x = floatToQ15((float)quat.x());
+  deviceState[role].quaternion.y = floatToQ15((float)quat.y());
+  deviceState[role].quaternion.z = floatToQ15((float)quat.z());
+
+  // EM7180_printAlgorithmDetails();
 
   if (sincePrint > printInterval)
   {
