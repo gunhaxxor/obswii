@@ -3,12 +3,12 @@
 //  RADIO
 //  Vcc       -     Vcc
 //  GND       -     GND
-//  CE        -     9
-//  CSN(CS)   -     10
-//  SCK       -     27
-//  MOSI      -     11
-//  MISO      -     12
-//  INT       -     26
+//  CE        -
+//  CSN(CS)   -
+//  SCK       -
+//  MOSI      -
+//  MISO      -
+//  INT       -
 #include "MAPPINGS.h"
 #include "button.h"
 #include "knob.h"
@@ -50,6 +50,7 @@ const char *role_friendly_name[] = {"Node 0", "Node 1", "BaseStation"};
 const int baseStation = nrOfNodes;
 //if radio is not used the imu data will be spewed directly to serial port, rather than sent over radio.
 bool useRadio = true;
+bool shouldRestartAcker = false;
 //Is nrf chip on pin 14? This configuration only applies if role is set manually (not autoRole)
 // const bool NRFOnPin14 = false;
 
@@ -79,6 +80,25 @@ const unsigned long relayDuration = 250;
 // volatile binaryInt16 transmitData[23] = {0}; //Should never be filled with more than 30 bytes, but make it bigger in case.
 // volatile uint8_t receivedCommands[commandArraySize];
 
+// bool initialized = false;
+// volatile bool radioEstablished = false;
+
+//Radio status information
+// int receivedPollPacketsOnPipe[nrOfNodes] = {0,0};
+// int receivedRelayPacketsOnPipe[nrOfNodes] = {0,0};
+// int pollFailsOnPipe[nrOfNodes] = {0,0};
+// int relayFailsOnPipe[nrOfNodes] = {0,0};
+// unsigned long normalPollFailedStamp[nrOfNodes] = {0};
+// unsigned long tryReestablishStamp[nrOfNodes] = {0,0};
+// unsigned long successStamp[nrOfNodes] = {0,0};
+// unsigned long lastSuccessStamp[nrOfNodes] = {0,0};
+// unsigned long maxTimeBetweenSuccesses[nrOfNodes] = {0,0};
+// unsigned long retrieveDuration[nrOfNodes] = {0,0};
+// bool sendTriggerAck[nrOfNodes] = {false};
+// bool triggerReceived[nrOfNodes] = {false};
+// binaryInt16 latestNodeValues[nrOfNodes][16] = {0};
+// bool isResponding[nrOfNodes] = {true, true};
+
 struct state
 { //Be sure to make this struct aligned!!
   uint8_t nodeId;
@@ -104,45 +124,9 @@ const int stateSize = sizeof(deviceState[0]);
 //Orientation sensor stuff
 Adafruit_BNO055 bno = Adafruit_BNO055(WIRE_BUS, -1, BNO055_ADDRESS_B, I2C_MASTER, I2C_PINS_16_17, I2C_PULLUP_EXT, I2C_RATE_400);
 imu::Quaternion quat;
-// I2C_PINS_16_17, I2C_PULLUP_EXT, I2C_RATE_400
 quaternion currentQuaternion = {1.0f, 0, 0, 0};
-const int nrOfPoseSlots = 10;
-quaternion learnedPoses[nrOfPoseSlots] = {0};
-
-// bool initialized = false;
-// volatile bool radioEstablished = false;
-
-//Radio status information
-// int receivedPollPacketsOnPipe[nrOfNodes] = {0,0};
-// int receivedRelayPacketsOnPipe[nrOfNodes] = {0,0};
-// int pollFailsOnPipe[nrOfNodes] = {0,0};
-// int relayFailsOnPipe[nrOfNodes] = {0,0};
-// unsigned long normalPollFailedStamp[nrOfNodes] = {0};
-// unsigned long tryReestablishStamp[nrOfNodes] = {0,0};
-// unsigned long successStamp[nrOfNodes] = {0,0};
-// unsigned long lastSuccessStamp[nrOfNodes] = {0,0};
-// unsigned long maxTimeBetweenSuccesses[nrOfNodes] = {0,0};
-// unsigned long retrieveDuration[nrOfNodes] = {0,0};
-// bool sendTriggerAck[nrOfNodes] = {false};
-// bool triggerReceived[nrOfNodes] = {false};
-// binaryInt16 latestNodeValues[nrOfNodes][16] = {0};
-// bool isResponding[nrOfNodes] = {true, true};
-
-//timing stuff
-unsigned long mainLoopStamp = 0;
-unsigned long mainLoopDuration = 0;
-unsigned long mainLoopFrequency = 0;
-
-unsigned long serialFrequency = 0;
-unsigned long serialStamp = 0;
-
-bool printDuringThisLap = false;
-unsigned long printFrequency = 5;
-unsigned long printStamp = 0;
-
-unsigned long sensorFusionDuration = 0;
-
-unsigned long midiStamp = 0;
+// const int nrOfPoseSlots = 10;
+// quaternion learnedPoses[nrOfPoseSlots] = {0};
 
 void button1interrupt();
 void button2interrupt();
@@ -166,12 +150,6 @@ void button5interrupt() { button[4].interrupt(); }
 void encButtonInterrupt();
 Button_Class encButton = Button_Class(ENCBUTTON_pin, BOUNCEDURATION, ENCBUTTON_TOGGLE, encButtonInterrupt);
 void encButtonInterrupt() { encButton.interrupt(); }
-// const int encButtonGroundPin = 30;
-
-// void shakeSensorInterrupt();
-// Button_Class shakeSensor = Button_Class(SHAKESENSOR_pin, BOUNCEDURATION, SHAKESENSOR_TOGGLE, shakeSensorInterrupt);
-// void shakeSensorInterrupt() { shakeSensor.interrupt(); }
-// const int shakeSensorGroundPin = 28;
 
 Knob_Class rotary = Knob_Class(ROTARY_pin1, ROTARY_pin2);
 // const int rotaryGroundPin = 34;
@@ -181,6 +159,10 @@ const int nrOfButtons = sizeof(button) / sizeof(button[0]);
 const int nrOfLeds = 5;
 const int ledPins[nrOfLeds] = {LED_pin0, LED_pin1, LED_pin2, LED_pin3, LED_pin4};
 
+//MIDI stuff
+bool shouldSendPoseMidi = false;
+
+//timing stuff
 elapsedMillis sinceFakeRadioMessage = 0;
 unsigned long fakeRadioMessageInterval = 200;
 
@@ -334,6 +316,12 @@ struct parameterGroupState
   controlChange savedControlChanges[maxNrOfCCsInParameterGroup];
 };
 
+// ******************************************************************************************************************************************************
+// ******************************************************************************************************************************************************
+// ******************************************************************************************************************************************************
+// ******************************************************************************************************************************************************
+// TODO: Very important! Figure out a sensible way to handle unset controlchanges in parameter groups.
+// I.e when different parametergroups contain different control changes
 const int nrOfParameterGroups = 10;
 parameterGroupState savedParameterGroups[nrOfParameterGroups] = {0};
 void saveParameterGroup(int slot)
@@ -361,21 +349,23 @@ void saveParameterGroup(int slot)
 };
 
 const float clampAngle = 10;
-bool activePoseSlots[nrOfPoseSlots] = {0};
-bool fullyTriggeredPoses[nrOfPoseSlots]{0};
-float distances[nrOfPoseSlots] = {0};
-float clampedDistances[nrOfPoseSlots] = {0};
-float parameterWeights[nrOfPoseSlots] = {0};
+bool activePoseSlots[nrOfParameterGroups] = {0};
+bool fullyTriggeredPoses[nrOfParameterGroups]{0};
+float distances[nrOfParameterGroups] = {0};
+float clampedDistances[nrOfParameterGroups] = {0};
+float parameterWeights[nrOfParameterGroups] = {0};
 void calculateParameterWeights()
 {
-  float invertedDistancesSum = 0.f;
-  float InvertedDistances[nrOfPoseSlots] = {0};
+  float weightSum = 0.f;
+  float weights[nrOfParameterGroups] = {0};
+
+  ///Loop through and check which poses are fully triggered
   bool anyPoseIsFullyTriggered = false;
-  for (size_t i = 0; i < nrOfPoseSlots; i++)
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if (activePoseSlots[i])
+    if (savedParameterGroups[i].active)
     {
-      distances[i] = toDegrees(quat_angle(currentQuaternion, learnedPoses[i]));
+      distances[i] = toDegrees(quat_angle(currentQuaternion, savedParameterGroups[i].savedPose));
       if (distances[i] < clampAngle)
       {
         fullyTriggeredPoses[i] = true;
@@ -388,49 +378,51 @@ void calculateParameterWeights()
     }
   }
 
+  //if at least one is fully triggered we compare only calculate weight distribution on the triggered ones
   if (anyPoseIsFullyTriggered)
   {
-    for (size_t i = 0; i < nrOfPoseSlots; i++)
+    for (size_t i = 0; i < nrOfParameterGroups; i++)
     {
-      if (activePoseSlots[i])
+      if (savedParameterGroups[i].active)
       {
         if (fullyTriggeredPoses[i])
         {
           if (distances[i] < 0.001f)
           {
-            InvertedDistances[i] = INFINITY;
+            weights[i] = INFINITY;
           }
           else
           {
-            InvertedDistances[i] = 1.0f / distances[i];
+            weights[i] = 1.0f / distances[i];
           }
-          invertedDistancesSum += InvertedDistances[i];
+          weightSum += weights[i];
         }
         else
         {
-          InvertedDistances[i] = 0.0f;
+          weights[i] = 0.0f;
         }
       }
     }
   }
-  else
+  else /// Otherwise calculate weight on all poses
   {
-    for (size_t i = 0; i < nrOfPoseSlots; i++)
+    for (size_t i = 0; i < nrOfParameterGroups; i++)
     {
-      if (activePoseSlots[i])
+      if (savedParameterGroups[i].active)
       {
         clampedDistances[i] = distances[i] - clampAngle;
-        InvertedDistances[i] = 1.0f / clampedDistances[i];
-        invertedDistancesSum += InvertedDistances[i];
+        weights[i] = 1.0f / clampedDistances[i];
+        weightSum += weights[i];
       }
     }
   }
 
-  for (size_t i = 0; i < nrOfPoseSlots; i++)
+  //normalize weights to percentages
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if (activePoseSlots[i])
+    if (savedParameterGroups[i].active)
     {
-      parameterWeights[i] = InvertedDistances[i] / invertedDistancesSum;
+      parameterWeights[i] = weights[i] / weightSum;
     }
   }
 }
@@ -456,6 +448,29 @@ void printParameterGroup(struct parameterGroupState paramGroup)
     if (paramGroup.savedControlChanges[i].active)
     {
       printf("%i: control=%i \t value=%i \n", i, paramGroup.savedControlChanges[i].cc, paramGroup.savedControlChanges[i].value);
+    }
+  }
+}
+
+void sendPoseMidi()
+{
+  // printf("sending pose MIDI\n");
+  controlChange controlChangesToSend[maxNrOfCCsInParameterGroup] = {0};
+  for (size_t controlIndex = 0; controlIndex < maxNrOfCCsInParameterGroup; controlIndex++)
+  {
+    for (size_t groupIndex = 0; groupIndex < nrOfParameterGroups; groupIndex++)
+    {
+      if (savedParameterGroups[groupIndex].active)
+      {
+        // printf("adding cc to list of sending ccs\n");
+        controlChangesToSend[controlIndex].active = savedParameterGroups[groupIndex].savedControlChanges[controlIndex].active;
+        controlChangesToSend[controlIndex].cc = savedParameterGroups[groupIndex].savedControlChanges[controlIndex].cc;
+        controlChangesToSend[controlIndex].value += parameterWeights[groupIndex] * savedParameterGroups[groupIndex].savedControlChanges[controlIndex].value;
+      }
+    }
+    if (controlChangesToSend[controlIndex].active)
+    {
+      usbMIDI.sendControlChange(controlChangesToSend[controlIndex].cc, controlChangesToSend[controlIndex].value, 1);
     }
   }
 }
@@ -494,9 +509,11 @@ void baseStationLoop()
   digitalWrite(13, LOW);
   usbMIDI.read();
   // delay(10);
+  bool radioSuccess = false;
   if (useRadio)
   {
-    if (pollNode(0, (uint8_t *)&pushState[currentNode], (uint8_t *)&deviceState[currentNode]))
+    radioSuccess = pollNode(0, (uint8_t *)&pushState[currentNode], (uint8_t *)&deviceState[currentNode]);
+    if (radioSuccess)
     {
       // printf("poll received\n");
       currentQuaternion.w = Q15ToFloat(deviceState[currentNode].quaternion.w);
@@ -525,13 +542,14 @@ void baseStationLoop()
   }
 
   recordControlChanges = deviceState[currentNode].buttons[0] % 2;
+  shouldSendPoseMidi = deviceState[currentNode].buttons[1] % 2;
 
   calculateParameterWeights();
 
   if (sinceMidiSend > midiSendInterval)
   {
     sinceMidiSend = 0;
-    if (sendPoseMidi)
+    if (shouldSendPoseMidi)
     {
       sendPoseMidi();
     }
@@ -540,7 +558,17 @@ void baseStationLoop()
   if (sincePrint > printInterval)
   {
     sincePrint = 0;
-    // printState(deviceState[currentNode]);
+
+    if (useRadio)
+      if (radioSuccess)
+      {
+        printf("poll received\n");
+      }
+      else
+      {
+        printf("pollnode failed\n");
+      }
+    printState(deviceState[currentNode]);
 
     // Serial.println("current -----");
     // printQuaternion(((currentQuaternion)));
@@ -583,6 +611,13 @@ void nodeLoop()
     }
     printf("\n");
     // radio.printDetails();
+  }
+  if (shouldRestartAcker || getNrOfCorruptPackets() > 50 || radio.failureDetected)
+  {
+    shouldRestartAcker = false;
+    printf("restarting radio!!");
+    restartAcker(role);
+    radio.failureDetected = 0;
   }
   interrupts();
 
@@ -634,14 +669,16 @@ void nodeLoop()
     // radio.printDetails();
     // writeAckPacks((void *)&deviceState, stateSize);
   }
+
+  handleSerialNode();
 }
 
 void printAngleDistances()
 {
   printf("angleDistances: ");
-  for (size_t i = 0; i < nrOfPoseSlots; i++)
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if (activePoseSlots[i])
+    if (savedParameterGroups[i].active)
     {
       printf("%f, ", distances[i]);
     }
@@ -652,9 +689,9 @@ void printAngleDistances()
 void printParameterWeights()
 {
   printf("parameterWeights: ");
-  for (size_t i = 0; i < nrOfPoseSlots; i++)
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if (activePoseSlots[i])
+    if (savedParameterGroups[i].active)
     {
       printf("%f, ", parameterWeights[i]);
     }
@@ -717,6 +754,20 @@ void handleSerial()
       break;
     case 'l':
       recordControlChanges = !recordControlChanges;
+      break;
+    }
+  }
+}
+
+void handleSerialNode()
+{
+  if (Serial.available())
+  {
+    uint8_t c = Serial.read();
+    switch (c)
+    {
+    case 'r':
+      shouldRestartAcker = true;
       break;
     }
   }

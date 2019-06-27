@@ -37,6 +37,13 @@ unsigned long secStamp = 0;
 
 volatile uint8_t sendStamp = 1; //incrementing packet id in order to make packets more unique
 
+volatile int corruptPacketCounter = 0;
+
+int getNrOfCorruptPackets()
+{
+  return corruptPacketCounter;
+}
+
 void openFirstPipe(uint8_t nodeNr)
 {
   radio.openReadingPipe(1, pipes[nodeNr]);
@@ -117,6 +124,7 @@ void openSecondPipe(uint8_t nodeNr)
 
 void commonSetup()
 {
+  corruptPacketCounter = 0;
   radio.begin();
   radio.enableDynamicPayloads();
   radio.enableAckPayload();
@@ -381,8 +389,8 @@ FASTRUN void radioInterrupt(void)
 
   radio.flush_tx();
   radio.writeAckPayload(1, txData, i);
-  radio.writeAckPayload(2, txData, i);
-  radio.writeAckPayload(3, txData, i);
+  // radio.writeAckPayload(2, txData, i);
+  // radio.writeAckPayload(3, txData, i);
 
   bool tx, fail, rx;
   radio.whatHappened(tx, fail, rx); // What happened?
@@ -400,13 +408,14 @@ FASTRUN void radioInterrupt(void)
     while (radio.available(&pipe))
     {
       uint8_t size = radio.getDynamicPayloadSize();
-      if (size != 0)
+      if (size > 0)
       {
         radio.read(rxData, size);
         // printf("received payload of size %i on pipe %i\n", size, pipe);
       }
       else
       {
+        corruptPacketCounter++;
         printf("payload has size 0. Means corrupt packet was received!\n");
       }
     }
@@ -590,6 +599,13 @@ uint8_t incSendStamp()
     sendStamp++;
 
   return sendStamp;
+}
+
+void restartAcker(int nodeNr)
+{
+  commonSetup();
+  setupAcker(nodeNr);
+  radio.printDetails();
 }
 
 // void updateStats(uint8_t node, bool success, bool isEdge, unsigned long startStamp){
