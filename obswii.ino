@@ -187,6 +187,9 @@ unsigned long fakeRadioMessageInterval = 200;
 elapsedMillis sincePrint = 0;
 unsigned long printInterval = 150;
 
+elapsedMillis sinceMidiSend = 0;
+unsigned long midiSendInterval = 10;
+
 void configurePinAsGround(int pin)
 {
   pinMode(pin, OUTPUT);
@@ -220,9 +223,9 @@ void setup()
       }
     }
   }
-  
+
   printf("ROLE: %s\n\r", role_friendly_name[role]);
-  
+
   if (role == baseStation)
   {
     //MIDI STUFF
@@ -291,12 +294,14 @@ void setup()
   // delay(2500);
 }
 
-void onNoteOn(byte channel, byte note, byte velocity){
+void onNoteOn(byte channel, byte note, byte velocity)
+{
   digitalWrite(13, !digitalRead(13));
 }
 
 bool recordControlChanges = true;
-struct controlChange {
+struct controlChange
+{
   bool active;
   int cc;
   int value;
@@ -304,13 +309,15 @@ struct controlChange {
 // const int nrOfControlChanges = 15
 const int nrOfCCs = 128;
 controlChange controlChanges[nrOfCCs] = {0};
-void onControlChange(byte channel, byte control, byte value){
+void onControlChange(byte channel, byte control, byte value)
+{
   // digitalWrite(13, !digitalRead(13));
   digitalWrite(13, HIGH);
   //midiThru
   usbMIDI.sendControlChange(control, value, channel);
   // printf("control change received\n");
-  if(recordControlChanges && !controlChanges[control].active){
+  if (recordControlChanges && !controlChanges[control].active)
+  {
     printf("recording CC number %i \n", control);
     controlChanges[control].active = true;
     controlChanges[control].cc = control;
@@ -319,7 +326,8 @@ void onControlChange(byte channel, byte control, byte value){
 }
 
 const int maxNrOfCCsInParameterGroup = 15;
-struct parameterGroupState {
+struct parameterGroupState
+{
   int slot;
   bool active;
   quaternion savedPose;
@@ -328,7 +336,8 @@ struct parameterGroupState {
 
 const int nrOfParameterGroups = 10;
 parameterGroupState savedParameterGroups[nrOfParameterGroups] = {0};
-void saveParameterGroup(int slot){
+void saveParameterGroup(int slot)
+{
   savedParameterGroups[slot].active = true;
   savedParameterGroups[slot].slot = slot;
   savedParameterGroups[slot].savedPose = currentQuaternion;
@@ -337,39 +346,118 @@ void saveParameterGroup(int slot){
   int k = 0;
   for (size_t i = 0; i < nrOfCCs; i++)
   {
-    if(controlChanges[i].active){
+    if (controlChanges[i].active)
+    {
       savedParameterGroups[slot].savedControlChanges[k] = controlChanges[i];
       k++;
     }
   }
   //clear the rest of the cc slots in this param group
-  while(k < maxNrOfCCsInParameterGroup){
+  while (k < maxNrOfCCsInParameterGroup)
+  {
     savedParameterGroups[slot].savedControlChanges[k].active = false;
     k++;
   }
-  
 };
 
-void printSavedParameterGroups(){
+const float clampAngle = 10;
+bool activePoseSlots[nrOfPoseSlots] = {0};
+bool fullyTriggeredPoses[nrOfPoseSlots]{0};
+float distances[nrOfPoseSlots] = {0};
+float clampedDistances[nrOfPoseSlots] = {0};
+float parameterWeights[nrOfPoseSlots] = {0};
+void calculateParameterWeights()
+{
+  float invertedDistancesSum = 0.f;
+  float InvertedDistances[nrOfPoseSlots] = {0};
+  bool anyPoseIsFullyTriggered = false;
+  for (size_t i = 0; i < nrOfPoseSlots; i++)
+  {
+    if (activePoseSlots[i])
+    {
+      distances[i] = toDegrees(quat_angle(currentQuaternion, learnedPoses[i]));
+      if (distances[i] < clampAngle)
+      {
+        fullyTriggeredPoses[i] = true;
+        anyPoseIsFullyTriggered = true;
+      }
+      else
+      {
+        fullyTriggeredPoses[i] = false;
+      }
+    }
+  }
+
+  if (anyPoseIsFullyTriggered)
+  {
+    for (size_t i = 0; i < nrOfPoseSlots; i++)
+    {
+      if (activePoseSlots[i])
+      {
+        if (fullyTriggeredPoses[i])
+        {
+          if (distances[i] < 0.001f)
+          {
+            InvertedDistances[i] = INFINITY;
+          }
+          else
+          {
+            InvertedDistances[i] = 1.0f / distances[i];
+          }
+          invertedDistancesSum += InvertedDistances[i];
+        }
+        else
+        {
+          InvertedDistances[i] = 0.0f;
+        }
+      }
+    }
+  }
+  else
+  {
+    for (size_t i = 0; i < nrOfPoseSlots; i++)
+    {
+      if (activePoseSlots[i])
+      {
+        clampedDistances[i] = distances[i] - clampAngle;
+        InvertedDistances[i] = 1.0f / clampedDistances[i];
+        invertedDistancesSum += InvertedDistances[i];
+      }
+    }
+  }
+
+  for (size_t i = 0; i < nrOfPoseSlots; i++)
+  {
+    if (activePoseSlots[i])
+    {
+      parameterWeights[i] = InvertedDistances[i] / invertedDistancesSum;
+    }
+  }
+}
+
+void printSavedParameterGroups()
+{
   for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if(savedParameterGroups[i].active){
+    if (savedParameterGroups[i].active)
+    {
       printParameterGroup(savedParameterGroups[i]);
     }
   }
 }
 
-void printParameterGroup(struct parameterGroupState paramGroup){
+void printParameterGroup(struct parameterGroupState paramGroup)
+{
   // printf("parameter group slot %i \n", &paramGroup->)
   printf("savedParamGroup slot %i -------------\n", paramGroup.slot);
   printf("w: %f, x:%f, y:%f, z:%f  \n", paramGroup.savedPose.w, paramGroup.savedPose.x, paramGroup.savedPose.y, paramGroup.savedPose.z);
   for (size_t i = 0; i < maxNrOfCCsInParameterGroup; i++)
   {
-    if(paramGroup.savedControlChanges[i].active){
+    if (paramGroup.savedControlChanges[i].active)
+    {
       printf("%i: control=%i \t value=%i \n", i, paramGroup.savedControlChanges[i].cc, paramGroup.savedControlChanges[i].value);
     }
   }
-  
 }
 
 void loop()
@@ -428,7 +516,7 @@ void baseStationLoop()
     if (pushState[currentNode].leds[i] != deviceState[currentNode].buttons[i])
     {
       int value = deviceState[currentNode].buttons[i] % 2;
-      pushState[currentNode].leds[i] = value? 200: 0;
+      pushState[currentNode].leds[i] = value ? 200 : 0;
       // printf("Changed button %i\n", i);
       // usbMIDI.sendControlChange(60 + i, value * 127, MIDICHANNEL);
     }
@@ -436,10 +524,18 @@ void baseStationLoop()
     // memcpy(pushState, deviceState, stateSize);
   }
 
-  recordControlChanges = deviceState[currentNode].buttons[0]%2;
+  recordControlChanges = deviceState[currentNode].buttons[0] % 2;
 
   calculateParameterWeights();
-  // radio.printDetails();
+
+  if (sinceMidiSend > midiSendInterval)
+  {
+    sinceMidiSend = 0;
+    if (sendPoseMidi)
+    {
+      sendPoseMidi();
+    }
+  }
 
   if (sincePrint > printInterval)
   {
@@ -537,81 +633,6 @@ void nodeLoop()
     sincePrint = 0;
     // radio.printDetails();
     // writeAckPacks((void *)&deviceState, stateSize);
-  }
-}
-
-const float clampAngle = 10;
-bool activePoseSlots[nrOfPoseSlots] = {0};
-bool fullyTriggeredPoses[nrOfPoseSlots]{0};
-float distances[nrOfPoseSlots] = {0};
-float clampedDistances[nrOfPoseSlots] = {0};
-float parameterWeights[nrOfPoseSlots] = {0};
-void calculateParameterWeights()
-{
-  float invertedDistancesSum = 0.f;
-  float InvertedDistances[nrOfPoseSlots] = {0};
-  bool anyPoseIsFullyTriggered = false;
-  for (size_t i = 0; i < nrOfPoseSlots; i++)
-  {
-    if (activePoseSlots[i])
-    {
-      distances[i] = toDegrees(quat_angle(currentQuaternion, learnedPoses[i]));
-      if (distances[i] < clampAngle)
-      {
-        fullyTriggeredPoses[i] = true;
-        anyPoseIsFullyTriggered = true;
-      }
-      else
-      {
-        fullyTriggeredPoses[i] = false;
-      }
-    }
-  }
-
-  if (anyPoseIsFullyTriggered)
-  {
-    for (size_t i = 0; i < nrOfPoseSlots; i++)
-    {
-      if (activePoseSlots[i])
-      {
-        if (fullyTriggeredPoses[i])
-        {
-          if (distances[i] < 0.001f)
-          {
-            InvertedDistances[i] = INFINITY;
-          }
-          else
-          {
-            InvertedDistances[i] = 1.0f / distances[i];
-          }
-          invertedDistancesSum += InvertedDistances[i];
-        }
-        else
-        {
-          InvertedDistances[i] = 0.0f;
-        }
-      }
-    }
-  }
-  else
-  {
-    for (size_t i = 0; i < nrOfPoseSlots; i++)
-    {
-      if (activePoseSlots[i])
-      {
-        clampedDistances[i] = distances[i] - clampAngle;
-        InvertedDistances[i] = 1.0f / clampedDistances[i];
-        invertedDistancesSum += InvertedDistances[i];
-      }
-    }
-  }
-
-  for (size_t i = 0; i < nrOfPoseSlots; i++)
-  {
-    if (activePoseSlots[i])
-    {
-      parameterWeights[i] = InvertedDistances[i] / invertedDistancesSum;
-    }
   }
 }
 
