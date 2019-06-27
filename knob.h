@@ -9,22 +9,20 @@
 #include "debug.h"
 #include "MAPPINGS.h"
 
+class Knob_Class
+{
+private:
+	Encoder enc;
+	int encValue, newEncValue;
 
-class Knob_Class{
-	private:
-		Encoder enc;
-		int encValue, newEncValue;
+public:
+	Knob_Class(int pin1, int pin2);
 
-	public:
-		Knob_Class(int pin1, int pin2);
-
-		uint8_t value;
-		// int CC;
-		void init();
-		bool updated();
-		void write(byte value);
-
+	int16_t value;
+	// int CC;
+	void init();
+	bool updated();
+	void write(int16_t value);
 };
-
 
 #endif

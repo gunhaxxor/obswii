@@ -113,7 +113,7 @@ struct state
   uint8_t buttons[5];
   // uint8_t shake;
   uint8_t rotaryButton;
-  uint8_t rotary;
+  int16_t rotary;
   uint8_t leds[5];
 };
 state deviceState[2];
