@@ -38,10 +38,16 @@ unsigned long secStamp = 0;
 volatile uint8_t sendStamp = 1; //incrementing packet id in order to make packets more unique
 
 volatile int corruptPacketCounter = 0;
+int failedPollsCounter = 0;
 
 int getNrOfCorruptPackets()
 {
   return corruptPacketCounter;
+}
+
+int getNrOfFailedPolls()
+{
+  return failedPollsCounter;
 }
 
 void openFirstPipe(uint8_t nodeNr)
@@ -125,6 +131,7 @@ void openSecondPipe(uint8_t nodeNr)
 void commonSetup()
 {
   corruptPacketCounter = 0;
+  failedPollsCounter = 0;
   radio.begin();
   radio.enableDynamicPayloads();
   radio.enableAckPayload();
@@ -210,6 +217,11 @@ bool pollNode(uint8_t node, uint8_t *pushState, uint8_t *getState)
     // updateStats(node, false, false, startStamp);
     // Serial.println("pollNode failed");
     ok = false;
+  }
+
+  if (!ok)
+  {
+    failedPollsCounter++;
   }
 
   return ok;
@@ -605,6 +617,15 @@ void restartAcker(int nodeNr)
 {
   commonSetup();
   setupAcker(nodeNr);
+  radio.failureDetected = 0;
+  radio.printDetails();
+}
+
+void restartPoller()
+{
+  commonSetup();
+  setupPoller();
+  radio.failureDetected = 0;
   radio.printDetails();
 }
 

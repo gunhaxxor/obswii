@@ -22,6 +22,8 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055_t3.h>
 
+#include "SD.h"
+
 unsigned long now = 0;
 
 //predefine
@@ -51,6 +53,7 @@ const int baseStation = nrOfNodes;
 //if radio is not used the imu data will be spewed directly to serial port, rather than sent over radio.
 bool useRadio = true;
 bool shouldRestartAcker = false;
+bool shouldRestartPoller = false;
 //Is nrf chip on pin 14? This configuration only applies if role is set manually (not autoRole)
 // const bool NRFOnPin14 = false;
 
@@ -117,6 +120,7 @@ struct state
   uint8_t leds[5];
 };
 state deviceState[2];
+state previousDeviceState[2];
 state pushState[2];
 
 const int stateSize = sizeof(deviceState[0]);
@@ -210,6 +214,16 @@ void setup()
 
   if (role == baseStation)
   {
+    if (!(SD.begin(BUILTIN_SDCARD)))
+    {
+      Serial.println("Unable to access the SD card! You cry now!!");
+      delay(500);
+    }
+    else
+    {
+      printf("SD card opened. Hurray!\n");
+    }
+
     //MIDI STUFF
     usbMIDI.setHandleControlChange(onControlChange);
     usbMIDI.setHandleNoteOn(onNoteOn);
@@ -315,20 +329,33 @@ struct parameterGroupState
   quaternion savedPose;
   controlChange savedControlChanges[maxNrOfCCsInParameterGroup];
 };
+const int nrOfParameterGroups = 5;
+// parameterGroupState savedParameterGroups[nrOfParameterGroups] = {0};
 
+struct preset
+{
+  bool active = false;
+  parameterGroupState savedParameterGroups[nrOfParameterGroups];
+};
+const int nrOfPresetSlots = 5;
+preset presets[nrOfPresetSlots] = {0};
+preset *currentPreset = &presets[0];
 // ******************************************************************************************************************************************************
 // ******************************************************************************************************************************************************
 // ******************************************************************************************************************************************************
 // ******************************************************************************************************************************************************
 // TODO: Very important! Figure out a sensible way to handle unset controlchanges in parameter groups.
 // I.e when different parametergroups contain different control changes
-const int nrOfParameterGroups = 10;
-parameterGroupState savedParameterGroups[nrOfParameterGroups] = {0};
+
+bool anyParamGroupSaved = false;
 void saveParameterGroup(int slot)
 {
-  savedParameterGroups[slot].active = true;
-  savedParameterGroups[slot].slot = slot;
-  savedParameterGroups[slot].savedPose = currentQuaternion;
+  //disable addition of more control changes after first saved parameter group
+  recordControlChanges = false;
+
+  currentPreset->savedParameterGroups[slot].active = true;
+  currentPreset->savedParameterGroups[slot].slot = slot;
+  currentPreset->savedParameterGroups[slot].savedPose = currentQuaternion;
 
   //save the recorded cc values
   int k = 0;
@@ -336,24 +363,32 @@ void saveParameterGroup(int slot)
   {
     if (controlChanges[i].active)
     {
-      savedParameterGroups[slot].savedControlChanges[k] = controlChanges[i];
+      currentPreset->savedParameterGroups[slot].savedControlChanges[k] = controlChanges[i];
       k++;
     }
   }
   //clear the rest of the cc slots in this param group
   while (k < maxNrOfCCsInParameterGroup)
   {
-    savedParameterGroups[slot].savedControlChanges[k].active = false;
+    currentPreset->savedParameterGroups[slot].savedControlChanges[k].active = false;
     k++;
   }
+
+  anyParamGroupSaved = true;
 };
 
-const float clampAngle = 10;
+void savePoseForParameterGroup(int slot)
+{
+  currentPreset->savedParameterGroups[slot].savedPose = currentQuaternion;
+};
+
+const float clampAngle = 15;
 bool activePoseSlots[nrOfParameterGroups] = {0};
 bool fullyTriggeredPoses[nrOfParameterGroups]{0};
 float distances[nrOfParameterGroups] = {0};
 float clampedDistances[nrOfParameterGroups] = {0};
 float parameterWeights[nrOfParameterGroups] = {0};
+
 void calculateParameterWeights()
 {
   float weightSum = 0.f;
@@ -363,9 +398,9 @@ void calculateParameterWeights()
   bool anyPoseIsFullyTriggered = false;
   for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if (savedParameterGroups[i].active)
+    if (currentPreset->savedParameterGroups[i].active)
     {
-      distances[i] = toDegrees(quat_angle(currentQuaternion, savedParameterGroups[i].savedPose));
+      distances[i] = toDegrees(quat_angle(currentQuaternion, currentPreset->savedParameterGroups[i].savedPose));
       if (distances[i] < clampAngle)
       {
         fullyTriggeredPoses[i] = true;
@@ -383,7 +418,7 @@ void calculateParameterWeights()
   {
     for (size_t i = 0; i < nrOfParameterGroups; i++)
     {
-      if (savedParameterGroups[i].active)
+      if (currentPreset->savedParameterGroups[i].active)
       {
         if (fullyTriggeredPoses[i])
         {
@@ -408,7 +443,7 @@ void calculateParameterWeights()
   {
     for (size_t i = 0; i < nrOfParameterGroups; i++)
     {
-      if (savedParameterGroups[i].active)
+      if (currentPreset->savedParameterGroups[i].active)
       {
         clampedDistances[i] = distances[i] - clampAngle;
         weights[i] = 1.0f / clampedDistances[i];
@@ -420,7 +455,7 @@ void calculateParameterWeights()
   //normalize weights to percentages
   for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if (savedParameterGroups[i].active)
+    if (currentPreset->savedParameterGroups[i].active)
     {
       parameterWeights[i] = weights[i] / weightSum;
     }
@@ -431,9 +466,9 @@ void printSavedParameterGroups()
 {
   for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if (savedParameterGroups[i].active)
+    if (currentPreset->savedParameterGroups[i].active)
     {
-      printParameterGroup(savedParameterGroups[i]);
+      printParameterGroup(currentPreset->savedParameterGroups[i]);
     }
   }
 }
@@ -460,12 +495,12 @@ void sendPoseMidi()
   {
     for (size_t groupIndex = 0; groupIndex < nrOfParameterGroups; groupIndex++)
     {
-      if (savedParameterGroups[groupIndex].active)
+      if (currentPreset->savedParameterGroups[groupIndex].active)
       {
         // printf("adding cc to list of sending ccs\n");
-        controlChangesToSend[controlIndex].active = savedParameterGroups[groupIndex].savedControlChanges[controlIndex].active;
-        controlChangesToSend[controlIndex].cc = savedParameterGroups[groupIndex].savedControlChanges[controlIndex].cc;
-        controlChangesToSend[controlIndex].value += parameterWeights[groupIndex] * savedParameterGroups[groupIndex].savedControlChanges[controlIndex].value;
+        controlChangesToSend[controlIndex].active = currentPreset->savedParameterGroups[groupIndex].savedControlChanges[controlIndex].active;
+        controlChangesToSend[controlIndex].cc = currentPreset->savedParameterGroups[groupIndex].savedControlChanges[controlIndex].cc;
+        controlChangesToSend[controlIndex].value += parameterWeights[groupIndex] * currentPreset->savedParameterGroups[groupIndex].savedControlChanges[controlIndex].value;
       }
     }
     if (controlChangesToSend[controlIndex].active)
@@ -504,8 +539,123 @@ void loop()
   }
 }
 
+int16_t rotaryModeReferenceValue;
+int prevRotaryValue = 0;
+int prevEncButton = 0;
+bool modeChooserActive = false;
+int modeCandidate = 0;
+int currentMode = 0;
+
+void checkModeChooser()
+{
+  if (deviceState[currentNode].rotaryButton != prevEncButton)
+  {
+    printf("new encbutton value\n");
+    prevEncButton = deviceState[currentNode].rotaryButton;
+    if (!(deviceState[currentNode].rotaryButton % 2))
+    {
+      if (modeChooserActive)
+      {
+        modeChooserActive = false;
+        currentMode = modeCandidate;
+        // clearAllLeds();
+        if (currentMode == 1 && !anyParamGroupSaved)
+        {
+          recordControlChanges = true;
+        }
+        else
+        {
+          recordControlChanges = false;
+        }
+      }
+      else
+      {
+        rotaryModeReferenceValue = deviceState[currentNode].rotary;
+        modeChooserActive = true;
+      }
+    }
+  }
+}
+
+uint16_t rotaryValue;
+void updateModeChooser()
+{
+  rotaryValue = deviceState[currentNode].rotary - rotaryModeReferenceValue + 10240;
+  // rotaryValue /= 4;
+  modeCandidate = (rotaryValue / 4) % 5;
+  clearAllLeds();
+  pulsateLed(modeCandidate, 0.2f);
+}
+
+void turnOnLedsForActiveParameterGroups()
+{
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
+      turnOnLed(i);
+    }
+  }
+}
+
+void fadeLedsFromWeights()
+{
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    fadeLed(i, parameterWeights[i] * parameterWeights[i]);
+  }
+}
+
+void clearAllLeds()
+{
+  for (size_t i = 0; i < nrOfLeds; i++)
+  {
+    pushState[currentNode].leds[i] = 0;
+  }
+}
+
+void turnOnLed(int i)
+{
+  if (i < 0 || i >= nrOfLeds)
+    return;
+  pushState[currentNode].leds[i] = ledBrightness[i];
+}
+
+void fadeLed(int i, float intensity)
+{
+  pushState[currentNode].leds[i] = ledBrightness[i] * intensity;
+}
+
+void pulsateLed(int i, float interval)
+{
+  unsigned long t = millis();
+  float intensity = sin((float)t * 0.001 * PI / interval) * 0.5 + 0.5;
+  pushState[currentNode].leds[i] = ledBrightness[i] * intensity;
+};
+
+bool wasButtonPressed(int i)
+{
+  bool changed = deviceState[currentNode].buttons[i] != previousDeviceState[currentNode].buttons[i];
+  return changed && (deviceState[currentNode].buttons[i] % 2);
+}
+
+bool wasButtonReleased(int i)
+{
+  bool changed = deviceState[currentNode].buttons[i] != previousDeviceState[currentNode].buttons[i];
+  return changed && !(deviceState[currentNode].buttons[i] % 2);
+}
+
 void baseStationLoop()
 {
+  noInterrupts();
+  if (shouldRestartPoller || getNrOfFailedPolls() > 150 || radio.failureDetected)
+  {
+    shouldRestartPoller = false;
+    printf("restarting radio!!");
+    restartPoller();
+  }
+  interrupts();
+
   digitalWrite(13, LOW);
   usbMIDI.read();
   // delay(10);
@@ -528,30 +678,68 @@ void baseStationLoop()
     }
   }
 
-  for (size_t i = 0; i < nrOfLeds; i++)
+  checkModeChooser();
+  if (modeChooserActive)
   {
-    if (pushState[currentNode].leds[i] != deviceState[currentNode].buttons[i])
-    {
-      int value = deviceState[currentNode].buttons[i] % 2;
-      pushState[currentNode].leds[i] = value ? 200 : 0;
-      // printf("Changed button %i\n", i);
-      // usbMIDI.sendControlChange(60 + i, value * 127, MIDICHANNEL);
-    }
-    // deviceState[currentNode].leds[i] = pushState[currentNode].leds[i];
-    // memcpy(pushState, deviceState, stateSize);
+    updateModeChooser();
   }
-
-  recordControlChanges = deviceState[currentNode].buttons[0] % 2;
-  shouldSendPoseMidi = deviceState[currentNode].buttons[1] % 2;
-
-  calculateParameterWeights();
-
-  if (sinceMidiSend > midiSendInterval)
+  else
   {
-    sinceMidiSend = 0;
-    if (shouldSendPoseMidi)
+
+    calculateParameterWeights();
+    clearAllLeds();
+    if (currentMode == 0)
     {
-      sendPoseMidi();
+
+      // for (size_t i = 0; i < nrOfLeds; i++)
+      // {
+      // }
+      shouldSendPoseMidi = wasButtonReleased(0) ? !shouldSendPoseMidi : shouldSendPoseMidi;
+      if (shouldSendPoseMidi)
+      {
+        turnOnLed(0);
+        if (sinceMidiSend > midiSendInterval)
+        {
+          sinceMidiSend = 0;
+          sendPoseMidi();
+        }
+      }
+    }
+    else if (currentMode == 1) //pose creation mode
+    {
+      turnOnLedsForActiveParameterGroups();
+      for (size_t slot = 0; slot < nrOfButtons; slot++)
+      {
+        if (wasButtonPressed(slot))
+        {
+          saveParameterGroup(slot);
+        }
+      }
+    }
+    else if (currentMode == 2) //pose repositioning mode
+    {
+      fadeLedsFromWeights();
+      for (size_t slot = 0; slot < nrOfButtons; slot++)
+      {
+        if (wasButtonPressed(slot))
+        {
+          savePoseForParameterGroup(slot);
+        }
+      }
+    }
+    else if (currentMode == 4) //pose repositioning mode
+    {
+      for (size_t slot = 0; slot < nrOfButtons; slot++)
+      {
+        if (wasButtonPressed(slot))
+        {
+          currentPreset = &presets[slot];
+        }
+        if (currentPreset == &presets[slot])
+        {
+          pulsateLed(slot, 0.5);
+        }
+      }
     }
   }
 
@@ -568,7 +756,14 @@ void baseStationLoop()
       {
         printf("pollnode failed\n");
       }
+
     printState(deviceState[currentNode]);
+
+    // printf("rotaryreference: %i \n", rotaryModeReferenceValue);
+    // printf("rotaryValue: %i \n", rotaryValue);
+    // printf("mode chooser active: %i \n", modeChooserActive);
+    // printf("modeChooser: %i\n", modeCandidate);
+    // printf("mode: %i\n", currentMode);
 
     // Serial.println("current -----");
     // printQuaternion(((currentQuaternion)));
@@ -587,13 +782,15 @@ void baseStationLoop()
     // printf("delta angle: %f \n", toDegrees(angle));
     // Serial.println();
 
-    // printAngleDistances();
-    // printParameterWeights();
-
     printSavedParameterGroups();
+    printAngleDistances();
+    printParameterWeights();
+    printFullyTriggered();
   }
 
-  handleSerial();
+  handleSerialBaseStation();
+
+  previousDeviceState[currentNode] = deviceState[currentNode];
 }
 
 elapsedMillis sinceLastLoop = 0;
@@ -617,7 +814,6 @@ void nodeLoop()
     shouldRestartAcker = false;
     printf("restarting radio!!");
     restartAcker(role);
-    radio.failureDetected = 0;
   }
   interrupts();
 
@@ -678,7 +874,7 @@ void printAngleDistances()
   printf("angleDistances: ");
   for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if (savedParameterGroups[i].active)
+    if (currentPreset->savedParameterGroups[i].active)
     {
       printf("%f, ", distances[i]);
     }
@@ -691,10 +887,20 @@ void printParameterWeights()
   printf("parameterWeights: ");
   for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if (savedParameterGroups[i].active)
+    if (currentPreset->savedParameterGroups[i].active)
     {
       printf("%f, ", parameterWeights[i]);
     }
+  }
+  Serial.println();
+}
+
+void printFullyTriggered()
+{
+  printf("fully Triggered: ");
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    printf("%i, ", fullyTriggeredPoses[i]);
   }
   Serial.println();
 }
@@ -722,7 +928,7 @@ void printQuaternion(quaternion q)
   printf("quaternion\t %f,%f,%f,%f \n", q.w, q.x, q.y, q.z);
 }
 
-void handleSerial()
+void handleSerialBaseStation()
 {
   if (Serial.available())
   {
@@ -749,11 +955,25 @@ void handleSerial()
       // activePoseSlots[3] = true;
       saveParameterGroup(3);
       break;
+    case '5':
+      // learnedPoses[3] = currentQuaternion;
+      // activePoseSlots[3] = true;
+      saveParameterGroup(4);
+      break;
     case 'r':
+      shouldRestartPoller = true;
+      break;
+    case 'o':
       useRadio = !useRadio;
       break;
-    case 'l':
+    case 'c':
       recordControlChanges = !recordControlChanges;
+      break;
+    case 's':
+      saveToSD();
+      break;
+    case 'l':
+      loadFromSD();
       break;
     }
   }
@@ -771,4 +991,42 @@ void handleSerialNode()
       break;
     }
   }
+}
+
+char fileNames[nrOfPresetSlots][14] = {"saveData1.bin", "saveData2.bin", "saveData3.bin", "saveData4.bin", "saveData5.bin"};
+char fileName[] = {"saveData.bin"};
+File saveFile;
+bool saveToSD()
+{
+  saveFile = SD.open(fileName, FILE_WRITE);
+  if (!saveFile)
+  {
+    printf("Failed to open/create saveFile in write mode! Your CRYYY!\n");
+    delay(500);
+    return;
+  }
+  if (!saveFile.seek(0))
+  {
+    printf("failed to seek\n");
+    return false;
+  }
+  // int writeCount = saveFile.write((uint8_t *)currentPreset->savedParameterGroups, sizeof(parameterGroupState) * nrOfParameterGroups);
+  int writeCount = saveFile.write((uint8_t *)presets, sizeof(preset) * nrOfPresetSlots);
+  printf("wrote %i bytes to the file. Wuuuhuu!\n", writeCount);
+  delay(250);
+  saveFile.close();
+}
+
+bool loadFromSD()
+{
+  saveFile = SD.open(fileName);
+  if (!saveFile)
+  {
+    printf("Failed to open saveFile in read mode! Your CRYYY!\n");
+    delay(500);
+    return;
+  }
+  // saveFile.read((uint8_t *)currentPreset->savedParameterGroups, sizeof(parameterGroupState) * nrOfParameterGroups);
+  saveFile.read((uint8_t *)presets, sizeof(preset) * nrOfPresetSlots);
+  saveFile.close();
 }

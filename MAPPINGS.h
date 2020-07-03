@@ -15,13 +15,13 @@
 #define RADIO_SCK_pin 27
 
 //button is toggle?
-#define BUTTON1_TOGGLE true
-#define BUTTON2_TOGGLE true
-#define BUTTON3_TOGGLE true
-#define BUTTON4_TOGGLE true
+#define BUTTON1_TOGGLE false
+#define BUTTON2_TOGGLE false
+#define BUTTON3_TOGGLE false
+#define BUTTON4_TOGGLE false
 #define BUTTON5_TOGGLE false
 
-#define ENCBUTTON_TOGGLE true
+#define ENCBUTTON_TOGGLE false
 #define SHAKESENSOR_TOGGLE false
 
 //Both when CC and when noteOn.
@@ -47,6 +47,18 @@
 #define LED_pin2 36
 #define LED_pin3 37
 #define LED_pin4 38
+
+const uint8_t ledBrightness[5] = {
+    150,
+    255,
+    20,
+    140,
+    100};
+// #define LED_1_BRIGHTNESS 195
+// #define LED_2_BRIGHTNESS 255
+// #define LED_3_BRIGHTNESS 180
+// #define LED_4_BRIGHTNESS 240
+// #define LED_5_BRIGHTNESS 255
 
 #define ENCBUTTON_pin 32
 #define ENCBUTTON_groundPin 31
