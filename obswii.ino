@@ -349,11 +349,11 @@ struct parameterGroupState {
   int slot;
   bool active;
   quaternion savedPose;
+  float distanceToClosestPose;
   controlChange savedControlChanges[maxNrOfCCsInParameterGroup];
   note savedNotes[maxNrOfNotesInParameterGroup];
 };
 const int nrOfParameterGroups = 5;
-// parameterGroupState savedParameterGroups[nrOfParameterGroups] = {0};
 
 struct preset {
   bool active = false;
@@ -410,6 +410,8 @@ void saveParameterGroup(int slot) {
     k++;
   }
 
+  calculatePoseMinDistances();
+
   anyParamGroupSaved = true;
 };
 
@@ -422,6 +424,28 @@ void savePoseForParameterGroup(int slot) {
   currentPreset->savedParameterGroups[slot].savedPose = currentQuaternion;
 };
 
+// This function checks for each pose which is the closest pose to it and saves it.
+void calculatePoseMinDistances () {
+  sincePrint = 0;
+  
+  for (size_t i = 0; i < nrOfParameterGroups; i++){
+    if (currentPreset->savedParameterGroups[i].active){
+      float minDistance = 180.f;
+      for (size_t j = 0; j < nrOfParameterGroups; j++){
+        if(i != j && currentPreset->savedParameterGroups[j].active){
+          printf("gonna calc angle distance between %i and %i\n", i, j);
+          float aDistance = toDegrees(quat_angle(
+                currentPreset->savedParameterGroups[i].savedPose, currentPreset->savedParameterGroups[j].savedPose));
+                printf("aDistance: %f\n", aDistance);
+          minDistance = aDistance < minDistance? aDistance: minDistance;
+        }
+      }
+      currentPreset->savedParameterGroups[i].distanceToClosestPose = minDistance;
+      printf("distanceToClosestPose for %i is %f\n", i, currentPreset->savedParameterGroups[i].distanceToClosestPose);
+    }
+  }
+}
+
 const float clampAngle = 15;
 bool activePoseSlots[nrOfParameterGroups] = {0};
 bool fullyTriggeredPoses[nrOfParameterGroups]{0};
@@ -429,6 +453,7 @@ float distances[nrOfParameterGroups] = {0};
 float clampedDistances[nrOfParameterGroups] = {0};
 float parameterWeights[nrOfParameterGroups] = {0};
 
+//THIS IS where the magic happens! Gunnar is the smartest dude for sure!!!!
 void calculateParameterWeights() {
   float weightSum = 0.f;
   float weights[nrOfParameterGroups] = {0};
@@ -469,10 +494,15 @@ void calculateParameterWeights() {
   {
     for (size_t i = 0; i < nrOfParameterGroups; i++) {
       if (currentPreset->savedParameterGroups[i].active) {
-        clampedDistances[i] = distances[i] - clampAngle;
-        // TODO: Try with quadratic or cubic weighting i.e. 1.0 / (
-        // clampedDistances[i] * clampedDistances[i])
-        weights[i] = 1.0f / clampedDistances[i];
+        if (distances[i] < currentPreset->savedParameterGroups[i].distanceToClosestPose) {
+          clampedDistances[i] = distances[i] - clampAngle;
+          // TODO: Try with quadratic or cubic weighting i.e. 1.0 / (
+          // clampedDistances[i] * clampedDistances[i])
+          weights[i] = 1.0f / clampedDistances[i];
+        } else {
+          weights[i] = 0.0f;
+        }
+
         weightSum += weights[i];
       }
     }
@@ -795,8 +825,8 @@ void baseStationLoop() {
     }
   }
 
-  if (sincePrint > printInterval) {
-    sincePrint = 0;
+  if (sincePrint > printInterval + 5000) {
+    sincePrint = 5000;
 
     if (useRadio)
       if (radioSuccess) {
@@ -831,6 +861,7 @@ void baseStationLoop() {
     // Serial.println();
 
     printSavedParameterGroups();
+    printDistanceToClosestPose();
     printAngleDistances();
     printParameterWeights();
     printFullyTriggered();
@@ -935,6 +966,16 @@ void printFullyTriggered() {
   for (size_t i = 0; i < nrOfParameterGroups; i++) {
     if (currentPreset->savedParameterGroups[i].active) {
       printf("%i, ", fullyTriggeredPoses[i]);
+    }
+  }
+  Serial.println();
+}
+
+void printDistanceToClosestPose() {
+  printf("minDistances (angle): ");
+  for (size_t i = 0; i < nrOfParameterGroups; i++) {
+    if (currentPreset->savedParameterGroups[i].active) {
+      printf("%f, ", currentPreset->savedParameterGroups[i].distanceToClosestPose);
     }
   }
   Serial.println();
