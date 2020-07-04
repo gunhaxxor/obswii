@@ -430,7 +430,7 @@ void calculatePoseMinDistances () {
   
   for (size_t i = 0; i < nrOfParameterGroups; i++){
     if (currentPreset->savedParameterGroups[i].active){
-      float minDistance = 180.f;
+      float minDistance = 90.f;
       for (size_t j = 0; j < nrOfParameterGroups; j++){
         if(i != j && currentPreset->savedParameterGroups[j].active){
           printf("gonna calc angle distance between %i and %i\n", i, j);
@@ -451,59 +451,95 @@ bool activePoseSlots[nrOfParameterGroups] = {0};
 bool fullyTriggeredPoses[nrOfParameterGroups]{0};
 float distances[nrOfParameterGroups] = {0};
 float clampedDistances[nrOfParameterGroups] = {0};
+float clampedOuterRadius[nrOfParameterGroups] = {0};
+float rawParameterWeights[nrOfParameterGroups] = {0};
 float parameterWeights[nrOfParameterGroups] = {0};
 
 //THIS IS where the magic happens! Gunnar is the smartest dude for sure!!!!
 void calculateParameterWeights() {
   float weightSum = 0.f;
-  float weights[nrOfParameterGroups] = {0};
+  // float weights[nrOfParameterGroups] = {0};
 
-  /// Loop through and check which poses are fully triggered
-  bool anyPoseIsFullyTriggered = false;
+  // I've split the algorithm into several parts/loops to make it easier to reason about. Not best performance but fuck it.
+
+  // First, let's just calculate the distances
   for (size_t i = 0; i < nrOfParameterGroups; i++) {
     if (currentPreset->savedParameterGroups[i].active) {
       distances[i] = toDegrees(quat_angle(
           currentQuaternion, currentPreset->savedParameterGroups[i].savedPose));
-      if (distances[i] < clampAngle) {
-        fullyTriggeredPoses[i] = true;
-        anyPoseIsFullyTriggered = true;
-      } else {
-        fullyTriggeredPoses[i] = false;
-      }
     }
   }
 
-  // if at least one is fully triggered we compare only calculate weight
-  // distribution on the triggered ones
-  if (anyPoseIsFullyTriggered) {
-    for (size_t i = 0; i < nrOfParameterGroups; i++) {
-      if (currentPreset->savedParameterGroups[i].active) {
-        if (fullyTriggeredPoses[i]) {
-          if (distances[i] < 0.001f) {
-            weights[i] = INFINITY;
-          } else {
-            weights[i] = 1.0f / distances[i];
-          }
-          weightSum += weights[i];
-        } else {
-          weights[i] = 0.0f;
-        }
-      }
-    }
-  } else /// Otherwise calculate weight on all poses
+  /// Loop through and check which poses are fully triggered
+  // bool anyPoseIsFullyTriggered = false;
+  // for (size_t i = 0; i < nrOfParameterGroups; i++) {
+  //   if (currentPreset->savedParameterGroups[i].active) {
+  //     if (distances[i] < clampAngle) {
+  //       fullyTriggeredPoses[i] = true;
+  //       anyPoseIsFullyTriggered = true;
+  //     } else {
+  //       fullyTriggeredPoses[i] = false;
+  //     }
+  //   }
+  // }
+
+  // if at least one is fully triggered we calculate weight
+  // distribution only on the triggered one(s)
+  // if (false && anyPoseIsFullyTriggered) {
+  //   for (size_t i = 0; i < nrOfParameterGroups; i++) {
+  //     if (currentPreset->savedParameterGroups[i].active) {
+  //       if (fullyTriggeredPoses[i]) {
+  //         if (distances[i] < 0.001f) {
+  //           rawParameterWeights[i] = INFINITY;
+  //         } else {
+  //           rawParameterWeights[i] = 1.0f / distances[i];
+  //         }
+  //         weightSum += rawParameterWeights[i];
+  //       } else {
+  //         rawParameterWeights[i] = 0.0f;
+  //       }
+  //     }
+  //   }
+  // } else /// Otherwise calculate weight on all poses
+
+
+  // // Loop through and check if any is within outerRadius
+  // bool noneWithinOuterRadius = true;
+  // for (size_t i = 0; i < nrOfParameterGroups; i++) {
+  //   if (currentPreset->savedParameterGroups[i].active) {
+  //     if (distances[i] < currentPreset->savedParameterGroups[i].distanceToClosestPose - clampAngle) {
+  //       noneWithinOuterRadius = false;
+  //     } else {
+  //     }
+  //   }
+  // }
+  // if(noneWithinOuterRadius){
+  //   for (size_t i = 0; i < nrOfParameterGroups; i++) {
+  //     if (currentPreset->savedParameterGroups[i].active) {
+  //       rawParameterWeights[i] = 1.f / distances[i];
+  //       weightSum += rawParameterWeights[i];
+  //     }
+  //   }
+  // }else
+
   {
     for (size_t i = 0; i < nrOfParameterGroups; i++) {
       if (currentPreset->savedParameterGroups[i].active) {
-        if (distances[i] < currentPreset->savedParameterGroups[i].distanceToClosestPose) {
+        // if (true || distances[i] < currentPreset->savedParameterGroups[i].distanceToClosestPose) {
           clampedDistances[i] = distances[i] - clampAngle;
+          clampedOuterRadius[i] = currentPreset->savedParameterGroups[i].distanceToClosestPose - clampAngle;
+
           // TODO: Try with quadratic or cubic weighting i.e. 1.0 / (
           // clampedDistances[i] * clampedDistances[i])
-          weights[i] = 1.0f / clampedDistances[i];
-        } else {
-          weights[i] = 0.0f;
-        }
+          // rawParameterWeights[i] = 1.0f / clampedDistances[i];
 
-        weightSum += weights[i];
+          rawParameterWeights[i] = constrain(1.f - (  clampedDistances[i] / clampedOuterRadius[i]), 0.f, INFINITY );
+
+        // } else {
+        //   rawParameterWeights[i] = 0.0f;
+        // }
+
+        weightSum += rawParameterWeights[i];
       }
     }
   }
@@ -511,7 +547,7 @@ void calculateParameterWeights() {
   // normalize weights to percentages
   for (size_t i = 0; i < nrOfParameterGroups; i++) {
     if (currentPreset->savedParameterGroups[i].active) {
-      parameterWeights[i] = weights[i] / weightSum;
+      parameterWeights[i] = rawParameterWeights[i] / weightSum;
     }
   }
 }
@@ -863,6 +899,8 @@ void baseStationLoop() {
     printSavedParameterGroups();
     printDistanceToClosestPose();
     printAngleDistances();
+    printClampedAngleDistances();
+    printRawParameterWeights();
     printParameterWeights();
     printFullyTriggered();
   }
@@ -946,6 +984,26 @@ void printAngleDistances() {
   for (size_t i = 0; i < nrOfParameterGroups; i++) {
     if (currentPreset->savedParameterGroups[i].active) {
       printf("%f, ", distances[i]);
+    }
+  }
+  Serial.println();
+}
+
+void printClampedAngleDistances() {
+  printf("clampedAngleDistances: ");
+  for (size_t i = 0; i < nrOfParameterGroups; i++) {
+    if (currentPreset->savedParameterGroups[i].active) {
+      printf("%f, ", clampedDistances[i]);
+    }
+  }
+  Serial.println();
+}
+
+void printRawParameterWeights() {
+  printf("rawParameterWeights: ");
+  for (size_t i = 0; i < nrOfParameterGroups; i++) {
+    if (currentPreset->savedParameterGroups[i].active) {
+      printf("%f, ", rawParameterWeights[i]);
     }
   }
   Serial.println();
