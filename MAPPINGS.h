@@ -49,16 +49,17 @@
 #define LED_pin4 38
 
 const uint8_t ledBrightness[5] = {
-    150,
+    1100,
     255,
-    20,
-    140,
+    50,
+    100,
     100};
-// #define LED_1_BRIGHTNESS 195
-// #define LED_2_BRIGHTNESS 255
-// #define LED_3_BRIGHTNESS 180
-// #define LED_4_BRIGHTNESS 240
-// #define LED_5_BRIGHTNESS 255
+// const uint8_t ledBrightness[5] = {
+//     255,
+//     255,
+//     255,
+//     255,
+//     255};
 
 #define ENCBUTTON_pin 32
 #define ENCBUTTON_groundPin 31

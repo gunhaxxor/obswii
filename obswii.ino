@@ -134,8 +134,11 @@ Adafruit_BNO055 bno =
     Adafruit_BNO055(WIRE_BUS, -1, BNO055_ADDRESS_B, I2C_MASTER, I2C_PINS_16_17,
                     I2C_PULLUP_EXT, I2C_RATE_400);
 imu::Quaternion quat;
+
+quaternion absoluteOrientation = {1.0f, 0, 0, 0};
+quaternion referenceQuaternion = {1.0f, 0, 0, 0};
+bool referenceQuaternionSet = false;
 quaternion currentQuaternion = {1.0f, 0, 0, 0};
-quaternion absoluteQuaternion = {1.0f, 0, 0, 0};
 // const int nrOfPoseSlots = 10;
 // quaternion learnedPoses[nrOfPoseSlots] = {0};
 
@@ -235,6 +238,7 @@ void setup()
     else
     {
       printf("SD card opened. Hurray!\n");
+      loadFromSD();
     }
 
     // MIDI STUFF
@@ -373,8 +377,8 @@ void onControlChange(byte channel, byte control, byte value)
   controlChanges[control].value = value;
 }
 
-const int maxNrOfCCsInParameterGroup = 15;
-const int maxNrOfNotesInParameterGroup = 15;
+const int maxNrOfCCsInParameterGroup = 25;
+const int maxNrOfNotesInParameterGroup = 25;
 struct parameterGroupState
 {
   int slot;
@@ -401,6 +405,7 @@ void saveParameterGroup(int slot)
   // disable addition of more control changes after first saved parameter group
   recordControlChanges = false;
   recordNotes = false;
+  anyParamGroupSaved = true;
 
   currentPreset->savedParameterGroups[slot].active = true;
   currentPreset->savedParameterGroups[slot].slot = slot;
@@ -443,20 +448,32 @@ void saveParameterGroup(int slot)
   }
 
   calculatePoseMinDistances();
-
-  anyParamGroupSaved = true;
 };
 
 void clearParameterGroup(int slot)
 {
   currentPreset->savedParameterGroups[slot].active = false;
   currentPreset->savedParameterGroups[slot].savedPose = currentQuaternion;
+
+  calculatePoseMinDistances();
 }
 
 void savePoseForParameterGroup(int slot)
 {
   currentPreset->savedParameterGroups[slot].savedPose = currentQuaternion;
+
+  calculatePoseMinDistances();
 };
+
+void setReferenceOrientation()
+{
+  printf("setting referenceQuaternion!\n");
+  sincePrint = 2000;
+  referenceQuaternion = absoluteOrientation;
+  //just in case we read value of currentQuaternion before a new update
+  currentQuaternion = quat_delta_rotation(referenceQuaternion, absoluteOrientation);
+  referenceQuaternionSet = true;
+}
 
 // This function checks for each pose which is the closest pose to it and saves it.
 void calculatePoseMinDistances()
@@ -771,6 +788,9 @@ int prevEncButton = 0;
 bool modeChooserActive = false;
 int modeCandidate = 0;
 int currentMode = 0;
+elapsedMillis sinceEncPress = 0;
+unsigned long longPressDuration = 2000;
+bool longPressTriggered = false;
 
 void checkModeChooser()
 {
@@ -778,7 +798,13 @@ void checkModeChooser()
   {
     printf("new encbutton value\n");
     prevEncButton = deviceState[currentNode].rotaryButton;
-    if (!(deviceState[currentNode].rotaryButton % 2))
+
+    if ((deviceState[currentNode].rotaryButton % 2))
+    {
+      sinceEncPress = 0;
+      longPressTriggered = false;
+    }
+    else if (!longPressTriggered)
     {
       if (modeChooserActive)
       {
@@ -798,8 +824,26 @@ void checkModeChooser()
       }
       else
       {
-        rotaryModeReferenceValue = deviceState[currentNode].rotary;
+        rotaryModeReferenceValue = deviceState[currentNode].rotary + currentMode * 4;
         modeChooserActive = true;
+      }
+    }
+  }
+  if ((deviceState[currentNode].rotaryButton % 2))
+  {
+    if (sinceEncPress > longPressDuration && !longPressTriggered)
+    {
+
+      longPressTriggered = true;
+      printf("Triggered LongPress!!!!");
+      sincePrint = 0;
+      if (currentMode == 4)
+      {
+        saveToSD();
+      }
+      else if (currentMode == 1)
+      {
+        clearAll();
       }
     }
   }
@@ -809,11 +853,42 @@ uint16_t rotaryValue;
 void updateModeChooser()
 {
   rotaryValue =
-      deviceState[currentNode].rotary - rotaryModeReferenceValue + 10240;
+      rotaryModeReferenceValue + 10240 - deviceState[currentNode].rotary;
   // rotaryValue /= 4;
   modeCandidate = (rotaryValue / 4) % 5;
   clearAllLeds();
-  pulsateLed(modeCandidate, 0.2f);
+  for (size_t i = 0; i < nrOfLeds; i++)
+  {
+    pulsateLed(i, 0.8f, 0.3);
+  }
+  // fadeLed(i, 0.2);
+  turnOnLed(modeCandidate);
+
+  // pulsateLed(modeCandidate, 0.2f);
+}
+
+void clearAll()
+{
+  for (size_t i = 0; i < nrOfCCs; i++)
+  {
+    controlChanges[i].active = false;
+  }
+
+  for (size_t i = 0; i < nrOfNotes; i++)
+  {
+    notes[i].active = false;
+  }
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    clearParameterGroup(i);
+  }
+  if (currentMode == 1)
+  {
+    recordControlChanges = true;
+    recordNotes = true;
+  }
+  anyParamGroupSaved = false;
+  referenceQuaternionSet = false;
 }
 
 void turnOnLedsForActiveParameterGroups()
@@ -876,6 +951,13 @@ void pulsateLed(int i, float interval)
   pushState[currentNode].leds[i] = ledBrightness[i] * intensity;
 };
 
+void pulsateLed(int i, float interval, float intensity)
+{
+  unsigned long t = millis();
+  float lfoValue = sin((float)t * 0.001 * PI / interval) * 0.5 + 0.5;
+  pushState[currentNode].leds[i] = ledBrightness[i] * lfoValue * intensity;
+};
+
 bool wasButtonPressed(int i)
 {
   bool changed = deviceState[currentNode].buttons[i] !=
@@ -913,11 +995,19 @@ void baseStationLoop()
     if (radioSuccess)
     {
       // printf("poll received\n");
-      currentQuaternion.w = Q15ToFloat(deviceState[currentNode].quaternion.w);
-      currentQuaternion.x = Q15ToFloat(deviceState[currentNode].quaternion.x);
-      currentQuaternion.y = Q15ToFloat(deviceState[currentNode].quaternion.y);
-      currentQuaternion.z = Q15ToFloat(deviceState[currentNode].quaternion.z);
-      currentQuaternion = quat_norm(currentQuaternion);
+      absoluteOrientation.w = Q15ToFloat(deviceState[currentNode].quaternion.w);
+      absoluteOrientation.x = Q15ToFloat(deviceState[currentNode].quaternion.x);
+      absoluteOrientation.y = Q15ToFloat(deviceState[currentNode].quaternion.y);
+      absoluteOrientation.z = Q15ToFloat(deviceState[currentNode].quaternion.z);
+      absoluteOrientation = quat_norm(absoluteOrientation);
+      if (referenceQuaternionSet)
+      {
+        currentQuaternion = quat_delta_rotation(referenceQuaternion, absoluteOrientation);
+      }
+      else
+      {
+        currentQuaternion = absoluteOrientation;
+      }
     }
     else
     {
@@ -937,10 +1027,6 @@ void baseStationLoop()
     clearAllLeds();
     if (currentMode == 0)
     {
-
-      // for (size_t i = 0; i < nrOfLeds; i++)
-      // {
-      // }
       shouldSendPoseMidi =
           wasButtonReleased(0) ? !shouldSendPoseMidi : shouldSendPoseMidi;
       if (shouldSendPoseMidi)
@@ -954,6 +1040,10 @@ void baseStationLoop()
           sendPoseMidi();
         }
       }
+      if (wasButtonReleased(4))
+      {
+        setReferenceOrientation();
+      }
     }
     else if (currentMode == 1) // pose creation mode
     {
@@ -962,6 +1052,10 @@ void baseStationLoop()
       {
         if (wasButtonPressed(slot))
         {
+          if (!referenceQuaternionSet)
+          {
+            setReferenceOrientation();
+          }
           saveParameterGroup(slot);
         }
       }
@@ -977,7 +1071,7 @@ void baseStationLoop()
         }
       }
     }
-    else if (currentMode == 4) // pose repositioning mode
+    else if (currentMode == 4) // select preset
     {
       for (size_t slot = 0; slot < nrOfButtons; slot++)
       {
@@ -997,17 +1091,15 @@ void baseStationLoop()
   {
     sincePrint = 5000;
 
-    if (useRadio)
-      if (radioSuccess)
-      {
-        printf("poll received\n");
-      }
-      else
-      {
-        printf("pollnode failed\n");
-      }
-
-    printState(deviceState[currentNode]);
+    // if (useRadio)
+    //   if (radioSuccess)
+    //   {
+    //     printf("poll received\n");
+    //   }
+    //   else
+    //   {
+    //     printf("pollnode failed\n");
+    //   }
 
     // printf("rotaryreference: %i \n", rotaryModeReferenceValue);
     // printf("rotaryValue: %i \n", rotaryValue);
@@ -1026,12 +1118,14 @@ void baseStationLoop()
 
     // quaternion deltaQ = quat_delta_rotation(currentQuaternion,
     // learnedPoses[0]); Serial.println("delta ----- ");
-    // printQuaternion(deltaQ);
 
     // float angle = quat_angle(currentQuaternion, learnedPoses[0]);
     // printf("delta angle: %f \n", toDegrees(angle));
     // Serial.println();
 
+    printState(deviceState[currentNode]);
+
+    printQuaternion(currentQuaternion);
     printSavedParameterGroups();
     printOuterRadius();
     printAngleDistances();
@@ -1294,10 +1388,10 @@ void handleSerialNode()
   }
 }
 
-char fileNames[nrOfPresetSlots][14] = {"saveData1.bin", "saveData2.bin",
-                                       "saveData3.bin", "saveData4.bin",
-                                       "saveData5.bin"};
-char fileName[] = {"saveData.bin"};
+// char fileNames[nrOfPresetSlots][14] = {"saveData1.bin", "saveData2.bin",
+//                                        "saveData3.bin", "saveData4.bin",
+//                                        "saveData5.bin"};
+char fileName[] = "obsWii.bin";
 File saveFile;
 bool saveToSD()
 {
