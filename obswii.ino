@@ -14,16 +14,13 @@
 #include "helpers.h"
 #include "knob.h"
 
-
 #include "RF24.h"
 #include "nRF24L01.h"
 #include <SPI.h>
 
-
 #include <Adafruit_BNO055_t3.h>
 #include <Adafruit_Sensor.h>
 #include <i2c_t3.h>
-
 
 #include "SD.h"
 
@@ -109,10 +106,12 @@ const unsigned long relayDuration = 250;
 // binaryInt16 latestNodeValues[nrOfNodes][16] = {0};
 // bool isResponding[nrOfNodes] = {true, true};
 
-struct state { // Be sure to make this struct aligned!!
+struct state
+{ // Be sure to make this struct aligned!!
   uint8_t nodeId;
   uint8_t updateCounter;
-  struct quaternionFixedPoint {
+  struct quaternionFixedPoint
+  {
     int16_t w;
     int16_t x;
     int16_t y;
@@ -136,6 +135,7 @@ Adafruit_BNO055 bno =
                     I2C_PULLUP_EXT, I2C_RATE_400);
 imu::Quaternion quat;
 quaternion currentQuaternion = {1.0f, 0, 0, 0};
+quaternion absoluteQuaternion = {1.0f, 0, 0, 0};
 // const int nrOfPoseSlots = 10;
 // quaternion learnedPoses[nrOfPoseSlots] = {0};
 
@@ -151,10 +151,11 @@ Button_Class button[] = {
     Button_Class(BUTTON4_pin, BOUNCEDURATION, BUTTON4_TOGGLE, button4interrupt),
     Button_Class(BUTTON5_pin, BOUNCEDURATION, BUTTON5_TOGGLE, button5interrupt),
 };
-void button1interrupt() {
+void button1interrupt()
+{
   button[0].interrupt();
 } // Trick to handle that interrupts can't be attached to class member
-  // functions. Jag vet. Det är lite b. Men lite mer lättanvänd kod...
+// functions. Jag vet. Det är lite b. Men lite mer lättanvänd kod...
 void button2interrupt() { button[1].interrupt(); }
 void button3interrupt() { button[2].interrupt(); }
 void button4interrupt() { button[3].interrupt(); }
@@ -188,12 +189,14 @@ unsigned long printInterval = 150;
 elapsedMillis sinceMidiSend = 0;
 unsigned long midiSendInterval = 10;
 
-void configurePinAsGround(int pin) {
+void configurePinAsGround(int pin)
+{
   pinMode(pin, OUTPUT);
   digitalWrite(pin, LOW);
 }
 
-void setup() {
+void setup()
+{
 
   noInterrupts();
 
@@ -203,14 +206,17 @@ void setup() {
   pinMode(13, OUTPUT);
 
   // ROLE. Do this first so everything that relies on it works properly
-  if (role == autoRole) {
+  if (role == autoRole)
+  {
     // baseStation is default
     role = baseStation;
     // Reads the pins 0-1 as a binary bcd number.
-    for (int i = 0; i < nrOfNodes; ++i) {
+    for (int i = 0; i < nrOfNodes; ++i)
+    {
       pinMode(i, INPUT_PULLUP);
       delay(2);
-      if (!digitalRead(i)) {
+      if (!digitalRead(i))
+      {
         role = i;
         break;
       }
@@ -219,11 +225,15 @@ void setup() {
 
   printf("ROLE: %s\n\r", role_friendly_name[role]);
 
-  if (role == baseStation) {
-    if (!(SD.begin(BUILTIN_SDCARD))) {
+  if (role == baseStation)
+  {
+    if (!(SD.begin(BUILTIN_SDCARD)))
+    {
       Serial.println("Unable to access the SD card! You cry now!!");
       delay(500);
-    } else {
+    }
+    else
+    {
       printf("SD card opened. Hurray!\n");
     }
 
@@ -231,7 +241,9 @@ void setup() {
     usbMIDI.setHandleControlChange(onControlChange);
     usbMIDI.setHandleNoteOn(onNoteOn);
     usbMIDI.setHandleNoteOff(onNoteOff);
-  } else {
+  }
+  else
+  {
     // Configure peripherals and ground pins (really hope the pins are capabe of
     // sinking enough current!!!!)
     configurePinAsGround(ROTARY_groundPin);
@@ -242,37 +254,46 @@ void setup() {
     encButton.init();
 
     // configurePinAsGround(buttonsGroundPin);
-    for (size_t i = 0; i < nrOfButtons; i++) {
+    for (size_t i = 0; i < nrOfButtons; i++)
+    {
       button[i].init();
     }
 
-    for (size_t i = 0; i < nrOfLeds; i++) {
+    for (size_t i = 0; i < nrOfLeds; i++)
+    {
       pinMode(ledPins[i], OUTPUT);
     }
 
     // EM7180_setup();
     // Wire.begin(I2C_MASTER, 0x00, I2C_PINS_16_17, I2C_PULLUP_EXT,
     // I2C_RATE_400);
-    if (bno.begin()) {
+    if (bno.begin())
+    {
       bno.setExtCrystalUse(false);
-    } else {
+    }
+    else
+    {
       /* There was a problem detecting the BNO055 ... check your connections */
       printf("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
     }
   }
 
   // Radio Stuff!
-  if (useRadio) {
+  if (useRadio)
+  {
     printf("Setting up radio\n");
     SPI.setSCK(RADIO_SCK_pin);
     SPI.setMOSI(RADIO_MOSI_pin);
     SPI.setMISO(RADIO_MISO_pin);
     // radioIRQPin = RADIO_INT_pin;
     commonSetup();
-    if (role == baseStation) {
+    if (role == baseStation)
+    {
       setupPoller();
       // setupMultiReceiver();
-    } else {
+    }
+    else
+    {
       // Make the first node have 0 as index.
       setupAcker(role);
       // setupTransmitter(role);
@@ -286,7 +307,8 @@ void setup() {
 }
 
 bool recordNotes = false;
-struct note {
+struct note
+{
   bool active;
   int note;
   int velocity;
@@ -295,11 +317,13 @@ struct note {
 const int nrOfNotes = 127;
 note notes[nrOfNotes] = {0};
 
-void onNoteOn(byte channel, byte note, byte velocity) {
+void onNoteOn(byte channel, byte note, byte velocity)
+{
   digitalWrite(13, !digitalRead(13));
   usbMIDI.sendNoteOn(note, velocity, channel);
 
-  if (recordNotes && !notes[note].active) {
+  if (recordNotes && !notes[note].active)
+  {
     printf("recording note number %i \n", note);
     notes[note].active = true;
     notes[note].note = note;
@@ -307,11 +331,13 @@ void onNoteOn(byte channel, byte note, byte velocity) {
   notes[note].velocity = velocity;
 }
 
-void onNoteOff(byte channel, byte note, byte velocity) {
+void onNoteOff(byte channel, byte note, byte velocity)
+{
   digitalWrite(13, !digitalRead(13));
   usbMIDI.sendNoteOff(note, velocity, channel);
 
-  if (recordNotes && !notes[note].active) {
+  if (recordNotes && !notes[note].active)
+  {
     printf("recording note number %i \n", note);
     notes[note].active = true;
     notes[note].note = note;
@@ -320,7 +346,8 @@ void onNoteOff(byte channel, byte note, byte velocity) {
 }
 
 bool recordControlChanges = false;
-struct controlChange {
+struct controlChange
+{
   bool active;
   int cc;
   int value;
@@ -329,13 +356,15 @@ struct controlChange {
 // const int nrOfControlChanges = 15
 const int nrOfCCs = 128;
 controlChange controlChanges[nrOfCCs] = {0};
-void onControlChange(byte channel, byte control, byte value) {
+void onControlChange(byte channel, byte control, byte value)
+{
   // digitalWrite(13, !digitalRead(13));
   digitalWrite(13, HIGH);
   // midiThru
   usbMIDI.sendControlChange(control, value, channel);
   // printf("control change received\n");
-  if (recordControlChanges && !controlChanges[control].active) {
+  if (recordControlChanges && !controlChanges[control].active)
+  {
     printf("recording CC number %i \n", control);
     sincePrint = 2000;
     controlChanges[control].active = true;
@@ -346,7 +375,8 @@ void onControlChange(byte channel, byte control, byte value) {
 
 const int maxNrOfCCsInParameterGroup = 15;
 const int maxNrOfNotesInParameterGroup = 15;
-struct parameterGroupState {
+struct parameterGroupState
+{
   int slot;
   bool active;
   quaternion savedPose;
@@ -356,7 +386,8 @@ struct parameterGroupState {
 };
 const int nrOfParameterGroups = 5;
 
-struct preset {
+struct preset
+{
   bool active = false;
   parameterGroupState savedParameterGroups[nrOfParameterGroups];
 };
@@ -365,7 +396,8 @@ preset presets[nrOfPresetSlots] = {0};
 preset *currentPreset = &presets[0];
 
 bool anyParamGroupSaved = false;
-void saveParameterGroup(int slot) {
+void saveParameterGroup(int slot)
+{
   // disable addition of more control changes after first saved parameter group
   recordControlChanges = false;
   recordNotes = false;
@@ -376,15 +408,18 @@ void saveParameterGroup(int slot) {
 
   // save the recorded cc values
   int k = 0;
-  for (size_t i = 0; i < nrOfCCs; i++) {
-    if (controlChanges[i].active) {
+  for (size_t i = 0; i < nrOfCCs; i++)
+  {
+    if (controlChanges[i].active)
+    {
       currentPreset->savedParameterGroups[slot].savedControlChanges[k] =
           controlChanges[i];
       k++;
     }
   }
   // clear the rest of the cc slots in this param group
-  while (k < maxNrOfCCsInParameterGroup) {
+  while (k < maxNrOfCCsInParameterGroup)
+  {
     currentPreset->savedParameterGroups[slot].savedControlChanges[k].active =
         false;
     k++;
@@ -392,14 +427,17 @@ void saveParameterGroup(int slot) {
 
   // save the recorded notes
   k = 0;
-  for (size_t i = 0; i < nrOfNotes; i++) {
-    if (notes[i].active) {
+  for (size_t i = 0; i < nrOfNotes; i++)
+  {
+    if (notes[i].active)
+    {
       currentPreset->savedParameterGroups[slot].savedNotes[k] = notes[i];
       k++;
     }
   }
   // clear the rest of the notes slots in this param group
-  while (k < maxNrOfNotesInParameterGroup) {
+  while (k < maxNrOfNotesInParameterGroup)
+  {
     currentPreset->savedParameterGroups[slot].savedNotes[k].active = false;
     k++;
   }
@@ -409,29 +447,36 @@ void saveParameterGroup(int slot) {
   anyParamGroupSaved = true;
 };
 
-void clearParameterGroup(int slot) {
+void clearParameterGroup(int slot)
+{
   currentPreset->savedParameterGroups[slot].active = false;
   currentPreset->savedParameterGroups[slot].savedPose = currentQuaternion;
 }
 
-void savePoseForParameterGroup(int slot) {
+void savePoseForParameterGroup(int slot)
+{
   currentPreset->savedParameterGroups[slot].savedPose = currentQuaternion;
 };
 
 // This function checks for each pose which is the closest pose to it and saves it.
-void calculatePoseMinDistances () {
+void calculatePoseMinDistances()
+{
   sincePrint = 0;
-  
-  for (size_t i = 0; i < nrOfParameterGroups; i++){
-    if (currentPreset->savedParameterGroups[i].active){
+
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       float minDistance = 90.f;
-      for (size_t j = 0; j < nrOfParameterGroups; j++){
-        if(i != j && currentPreset->savedParameterGroups[j].active){
+      for (size_t j = 0; j < nrOfParameterGroups; j++)
+      {
+        if (i != j && currentPreset->savedParameterGroups[j].active)
+        {
           printf("gonna calc angle distance between %i and %i\n", i, j);
           float aDistance = toDegrees(quat_angle(
-                currentPreset->savedParameterGroups[i].savedPose, currentPreset->savedParameterGroups[j].savedPose));
-                printf("aDistance: %f\n", aDistance);
-          minDistance = aDistance < minDistance? aDistance: minDistance;
+              currentPreset->savedParameterGroups[i].savedPose, currentPreset->savedParameterGroups[j].savedPose));
+          printf("aDistance: %f\n", aDistance);
+          minDistance = aDistance < minDistance ? aDistance : minDistance;
         }
       }
       currentPreset->savedParameterGroups[i].outerRadius = minDistance;
@@ -450,15 +495,18 @@ float rawParameterWeights[nrOfParameterGroups] = {0};
 float parameterWeights[nrOfParameterGroups] = {0};
 
 //THIS IS where the magic happens! Gunnar is the smartest dude for sure!!!!
-void calculateParameterWeights() {
+void calculateParameterWeights()
+{
   float weightSum = 0.f;
   // float weights[nrOfParameterGroups] = {0};
 
   // I've split the algorithm into several parts/loops to make it easier to reason about. Not best performance but fuck it.
 
   // First, let's just calculate the distances
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       distances[i] = toDegrees(quat_angle(
           currentQuaternion, currentPreset->savedParameterGroups[i].savedPose));
     }
@@ -496,42 +544,53 @@ void calculateParameterWeights() {
   //   }
   // } else /// Otherwise calculate weight on all poses
 
-
   // Loop through and check if any is within outerRadius
   bool noneWithinOuterRadius = true;
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
-      if (distances[i] < currentPreset->savedParameterGroups[i].outerRadius - clampAngle) {
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
+      if (distances[i] < currentPreset->savedParameterGroups[i].outerRadius - clampAngle)
+      {
         noneWithinOuterRadius = false;
       }
     }
   }
-  if(noneWithinOuterRadius){
-    for (size_t i = 0; i < nrOfParameterGroups; i++) {
-      if (currentPreset->savedParameterGroups[i].active) {
+  if (noneWithinOuterRadius)
+  {
+    for (size_t i = 0; i < nrOfParameterGroups; i++)
+    {
+      if (currentPreset->savedParameterGroups[i].active)
+      {
         float distanceToOuterRadius = distances[i] - (currentPreset->savedParameterGroups[i].outerRadius - clampAngle);
-        if (distanceToOuterRadius < 0.001f) {
+        if (distanceToOuterRadius < 0.001f)
+        {
           rawParameterWeights[i] = INFINITY;
-        } else {
+        }
+        else
+        {
           rawParameterWeights[i] = 1.0f / distanceToOuterRadius;
         }
         weightSum += rawParameterWeights[i];
       }
     }
-  }else
+  }
+  else
 
   {
-    for (size_t i = 0; i < nrOfParameterGroups; i++) {
-      if (currentPreset->savedParameterGroups[i].active) {
+    for (size_t i = 0; i < nrOfParameterGroups; i++)
+    {
+      if (currentPreset->savedParameterGroups[i].active)
+      {
         // if (true || distances[i] < currentPreset->savedParameterGroups[i].outerRadius) {
-          clampedDistances[i] = distances[i] - clampAngle;
-          clampedOuterRadius[i] = currentPreset->savedParameterGroups[i].outerRadius - clampAngle;
+        clampedDistances[i] = distances[i] - clampAngle;
+        clampedOuterRadius[i] = currentPreset->savedParameterGroups[i].outerRadius - clampAngle;
 
-          // TODO: Try with quadratic or cubic weighting i.e. 1.0 / (
-          // clampedDistances[i] * clampedDistances[i])
-          // rawParameterWeights[i] = 1.0f / clampedDistances[i];
+        // TODO: Try with quadratic or cubic weighting i.e. 1.0 / (
+        // clampedDistances[i] * clampedDistances[i])
+        // rawParameterWeights[i] = 1.0f / clampedDistances[i];
 
-          rawParameterWeights[i] = constrain(1.f - (  clampedDistances[i] / clampedOuterRadius[i]), 0.f, INFINITY );
+        rawParameterWeights[i] = constrain(1.f - (clampedDistances[i] / clampedOuterRadius[i]), 0.f, INFINITY);
 
         // } else {
         //   rawParameterWeights[i] = 0.0f;
@@ -543,51 +602,65 @@ void calculateParameterWeights() {
   }
 
   // normalize weights to percentages
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       parameterWeights[i] = rawParameterWeights[i] / weightSum;
     }
   }
 }
 
-void printSavedParameterGroups() {
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+void printSavedParameterGroups()
+{
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       printParameterGroup(currentPreset->savedParameterGroups[i]);
     }
   }
 }
 
-void printParameterGroup(struct parameterGroupState paramGroup) {
+void printParameterGroup(struct parameterGroupState paramGroup)
+{
   // printf("parameter group slot %i \n", &paramGroup->)
   printf("savedParamGroup slot %i -------------\n", paramGroup.slot);
   printf("w: %f, x:%f, y:%f, z:%f  \n", paramGroup.savedPose.w,
          paramGroup.savedPose.x, paramGroup.savedPose.y,
          paramGroup.savedPose.z);
-  for (size_t i = 0; i < maxNrOfCCsInParameterGroup; i++) {
-    if (paramGroup.savedControlChanges[i].active) {
+  for (size_t i = 0; i < maxNrOfCCsInParameterGroup; i++)
+  {
+    if (paramGroup.savedControlChanges[i].active)
+    {
       printf("%i: control=%i \t value=%i \n", i,
              paramGroup.savedControlChanges[i].cc,
              paramGroup.savedControlChanges[i].value);
     }
   }
 
-  for (size_t i = 0; i < maxNrOfNotesInParameterGroup; i++) {
-    if (paramGroup.savedNotes[i].active) {
+  for (size_t i = 0; i < maxNrOfNotesInParameterGroup; i++)
+  {
+    if (paramGroup.savedNotes[i].active)
+    {
       printf("%i: note=%i \t velocity=%i \n", i, paramGroup.savedNotes[i].note,
              paramGroup.savedNotes[i].velocity);
     }
   }
 }
 
-void sendPoseMidi() {
+void sendPoseMidi()
+{
   // printf("sending pose MIDI\n");
   controlChange controlChangesToSend[maxNrOfCCsInParameterGroup] = {0};
   for (size_t controlIndex = 0; controlIndex < maxNrOfCCsInParameterGroup;
-       controlIndex++) {
+       controlIndex++)
+  {
     for (size_t groupIndex = 0; groupIndex < nrOfParameterGroups;
-         groupIndex++) {
-      if (currentPreset->savedParameterGroups[groupIndex].active) {
+         groupIndex++)
+    {
+      if (currentPreset->savedParameterGroups[groupIndex].active)
+      {
         // printf("adding cc to list of sending ccs\n");
         controlChangesToSend[controlIndex].active =
             currentPreset->savedParameterGroups[groupIndex]
@@ -604,7 +677,8 @@ void sendPoseMidi() {
                 .value;
       }
     }
-    if (controlChangesToSend[controlIndex].active) {
+    if (controlChangesToSend[controlIndex].active)
+    {
       usbMIDI.sendControlChange(controlChangesToSend[controlIndex].cc,
                                 controlChangesToSend[controlIndex].value, 1);
     }
@@ -617,10 +691,13 @@ void sendPoseMidi() {
   //   notesToSend[maxNrOfNotesInParameterGroup].velocity = 0;
   // }
   for (size_t noteIndex = 0; noteIndex < maxNrOfNotesInParameterGroup;
-       noteIndex++) {
+       noteIndex++)
+  {
     for (size_t groupIndex = 0; groupIndex < nrOfParameterGroups;
-         groupIndex++) {
-      if (currentPreset->savedParameterGroups[groupIndex].active) {
+         groupIndex++)
+    {
+      if (currentPreset->savedParameterGroups[groupIndex].active)
+      {
         // printf("adding cc to list of sending ccs\n");
         notesToSend[noteIndex].active =
             currentPreset->savedParameterGroups[groupIndex]
@@ -636,32 +713,40 @@ void sendPoseMidi() {
         // > 0){
 
         // }
-        if (parameterWeights[groupIndex] > 0.80) {
+        if (parameterWeights[groupIndex] > 0.80)
+        {
           if (currentPreset->savedParameterGroups[groupIndex]
                   .savedNotes[noteIndex]
-                  .velocity > 0) {
+                  .velocity > 0)
+          {
             notesToSend[noteIndex].velocity = 127;
-          } else {
+          }
+          else
+          {
             notesToSend[noteIndex].velocity = 0;
           }
         }
       }
     }
-    if (notesToSend[noteIndex].active) {
+    if (notesToSend[noteIndex].active)
+    {
       usbMIDI.sendNoteOn(notesToSend[noteIndex].note,
                          notesToSend[noteIndex].velocity, 1);
     }
   }
 }
 
-void loop() {
+void loop()
+{
   // What is the time?
   now = millis();
 
-  if (role == baseStation) {
+  if (role == baseStation)
+  {
     baseStationLoop();
     return;
-  } else // is a node
+  }
+  else // is a node
   {
     nodeLoop();
   }
@@ -672,7 +757,8 @@ void loop() {
   //   memcpy(deviceState, pushState, stateSize);
   // }
 
-  if (sincePrint > printInterval) {
+  if (sincePrint > printInterval)
+  {
     sincePrint = 0;
 
     // printState(deviceState[role]);
@@ -686,23 +772,32 @@ bool modeChooserActive = false;
 int modeCandidate = 0;
 int currentMode = 0;
 
-void checkModeChooser() {
-  if (deviceState[currentNode].rotaryButton != prevEncButton) {
+void checkModeChooser()
+{
+  if (deviceState[currentNode].rotaryButton != prevEncButton)
+  {
     printf("new encbutton value\n");
     prevEncButton = deviceState[currentNode].rotaryButton;
-    if (!(deviceState[currentNode].rotaryButton % 2)) {
-      if (modeChooserActive) {
+    if (!(deviceState[currentNode].rotaryButton % 2))
+    {
+      if (modeChooserActive)
+      {
         modeChooserActive = false;
         currentMode = modeCandidate;
         // clearAllLeds();
-        if (currentMode == 1 && !anyParamGroupSaved) {
+        if (currentMode == 1 && !anyParamGroupSaved)
+        {
           recordControlChanges = true;
           recordNotes = true;
-        } else {
+        }
+        else
+        {
           recordControlChanges = false;
           recordNotes = false;
         }
-      } else {
+      }
+      else
+      {
         rotaryModeReferenceValue = deviceState[currentNode].rotary;
         modeChooserActive = true;
       }
@@ -711,7 +806,8 @@ void checkModeChooser() {
 }
 
 uint16_t rotaryValue;
-void updateModeChooser() {
+void updateModeChooser()
+{
   rotaryValue =
       deviceState[currentNode].rotary - rotaryModeReferenceValue + 10240;
   // rotaryValue /= 4;
@@ -720,68 +816,86 @@ void updateModeChooser() {
   pulsateLed(modeCandidate, 0.2f);
 }
 
-void turnOnLedsForActiveParameterGroups() {
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+void turnOnLedsForActiveParameterGroups()
+{
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       turnOnLed(i);
     }
   }
 }
 
-void fadeLedsFromWeights() {
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+void fadeLedsFromWeights()
+{
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       fadeLed(i, parameterWeights[i] * parameterWeights[i]);
-    } else {
+    }
+    else
+    {
       turnOffLed(i);
     }
   }
 }
 
-void clearAllLeds() {
-  for (size_t i = 0; i < nrOfLeds; i++) {
+void clearAllLeds()
+{
+  for (size_t i = 0; i < nrOfLeds; i++)
+  {
     pushState[currentNode].leds[i] = 0;
   }
 }
 
-void turnOnLed(int i) {
+void turnOnLed(int i)
+{
   if (i < 0 || i >= nrOfLeds)
     return;
   pushState[currentNode].leds[i] = ledBrightness[i];
 }
 
-void turnOffLed(int i) {
+void turnOffLed(int i)
+{
   if (i < 0 || i >= nrOfLeds)
     return;
   pushState[currentNode].leds[i] = 0;
 }
 
-void fadeLed(int i, float intensity) {
+void fadeLed(int i, float intensity)
+{
   pushState[currentNode].leds[i] = ledBrightness[i] * intensity;
 }
 
-void pulsateLed(int i, float interval) {
+void pulsateLed(int i, float interval)
+{
   unsigned long t = millis();
   float intensity = sin((float)t * 0.001 * PI / interval) * 0.5 + 0.5;
   pushState[currentNode].leds[i] = ledBrightness[i] * intensity;
 };
 
-bool wasButtonPressed(int i) {
+bool wasButtonPressed(int i)
+{
   bool changed = deviceState[currentNode].buttons[i] !=
                  previousDeviceState[currentNode].buttons[i];
   return changed && (deviceState[currentNode].buttons[i] % 2);
 }
 
-bool wasButtonReleased(int i) {
+bool wasButtonReleased(int i)
+{
   bool changed = deviceState[currentNode].buttons[i] !=
                  previousDeviceState[currentNode].buttons[i];
   return changed && !(deviceState[currentNode].buttons[i] % 2);
 }
 
-void baseStationLoop() {
+void baseStationLoop()
+{
   noInterrupts();
   if (shouldRestartPoller || getNrOfFailedPolls() > 150 ||
-      radio.failureDetected) {
+      radio.failureDetected)
+  {
     shouldRestartPoller = false;
     printf("restarting radio!!");
     restartPoller();
@@ -792,80 +906,104 @@ void baseStationLoop() {
   usbMIDI.read();
   // delay(10);
   bool radioSuccess = false;
-  if (useRadio) {
+  if (useRadio)
+  {
     radioSuccess = pollNode(0, (uint8_t *)&pushState[currentNode],
                             (uint8_t *)&deviceState[currentNode]);
-    if (radioSuccess) {
+    if (radioSuccess)
+    {
       // printf("poll received\n");
       currentQuaternion.w = Q15ToFloat(deviceState[currentNode].quaternion.w);
       currentQuaternion.x = Q15ToFloat(deviceState[currentNode].quaternion.x);
       currentQuaternion.y = Q15ToFloat(deviceState[currentNode].quaternion.y);
       currentQuaternion.z = Q15ToFloat(deviceState[currentNode].quaternion.z);
       currentQuaternion = quat_norm(currentQuaternion);
-    } else {
+    }
+    else
+    {
       // printf("pollnode failed\n");
     }
   }
 
   checkModeChooser();
-  if (modeChooserActive) {
+  if (modeChooserActive)
+  {
     updateModeChooser();
-  } else {
+  }
+  else
+  {
 
     calculateParameterWeights();
     clearAllLeds();
-    if (currentMode == 0) {
+    if (currentMode == 0)
+    {
 
       // for (size_t i = 0; i < nrOfLeds; i++)
       // {
       // }
       shouldSendPoseMidi =
           wasButtonReleased(0) ? !shouldSendPoseMidi : shouldSendPoseMidi;
-      if (shouldSendPoseMidi) {
+      if (shouldSendPoseMidi)
+      {
 
         fadeLedsFromWeights();
         // turnOnLed(0);
-        if (sinceMidiSend > midiSendInterval) {
+        if (sinceMidiSend > midiSendInterval)
+        {
           sinceMidiSend = 0;
           sendPoseMidi();
         }
       }
-    } else if (currentMode == 1) // pose creation mode
+    }
+    else if (currentMode == 1) // pose creation mode
     {
       turnOnLedsForActiveParameterGroups();
-      for (size_t slot = 0; slot < nrOfButtons; slot++) {
-        if (wasButtonPressed(slot)) {
+      for (size_t slot = 0; slot < nrOfButtons; slot++)
+      {
+        if (wasButtonPressed(slot))
+        {
           saveParameterGroup(slot);
         }
       }
-    } else if (currentMode == 2) // pose repositioning mode
+    }
+    else if (currentMode == 2) // pose repositioning mode
     {
       fadeLedsFromWeights();
-      for (size_t slot = 0; slot < nrOfButtons; slot++) {
-        if (wasButtonPressed(slot)) {
+      for (size_t slot = 0; slot < nrOfButtons; slot++)
+      {
+        if (wasButtonPressed(slot))
+        {
           savePoseForParameterGroup(slot);
         }
       }
-    } else if (currentMode == 4) // pose repositioning mode
+    }
+    else if (currentMode == 4) // pose repositioning mode
     {
-      for (size_t slot = 0; slot < nrOfButtons; slot++) {
-        if (wasButtonPressed(slot)) {
+      for (size_t slot = 0; slot < nrOfButtons; slot++)
+      {
+        if (wasButtonPressed(slot))
+        {
           currentPreset = &presets[slot];
         }
-        if (currentPreset == &presets[slot]) {
+        if (currentPreset == &presets[slot])
+        {
           pulsateLed(slot, 0.5);
         }
       }
     }
   }
 
-  if (sincePrint > printInterval + 5000) {
+  if (sincePrint > printInterval + 5000)
+  {
     sincePrint = 5000;
 
     if (useRadio)
-      if (radioSuccess) {
+      if (radioSuccess)
+      {
         printf("poll received\n");
-      } else {
+      }
+      else
+      {
         printf("pollnode failed\n");
       }
 
@@ -909,12 +1047,15 @@ void baseStationLoop() {
 }
 
 elapsedMillis sinceLastLoop = 0;
-void nodeLoop() {
+void nodeLoop()
+{
   noInterrupts();
-  if (radio.rxFifoFull()) {
+  if (radio.rxFifoFull())
+  {
     Serial.print("RX FIFO FULL! Dummyreading. ");
     uint8_t data[32] = {0};
-    while (radio.available()) {
+    while (radio.available())
+    {
       printf("read. ");
       radio.read(data, radio.getDynamicPayloadSize());
     }
@@ -922,7 +1063,8 @@ void nodeLoop() {
     // radio.printDetails();
   }
   if (shouldRestartAcker || getNrOfCorruptPackets() > 50 ||
-      radio.failureDetected) {
+      radio.failureDetected)
+  {
     shouldRestartAcker = false;
     printf("restarting radio!!");
     restartAcker(role);
@@ -935,22 +1077,26 @@ void nodeLoop() {
   // printf(".\n");
 
   // handle all the inputs
-  if (rotary.updated()) {
+  if (rotary.updated())
+  {
     deviceState[role].rotary = rotary.value;
   }
-  for (size_t i = 0; i < nrOfButtons; i++) {
+  for (size_t i = 0; i < nrOfButtons; i++)
+  {
     deviceState[role].buttons[i] = button[i].value;
   }
   deviceState[role].rotaryButton = encButton.value;
   // deviceState[role].shake = shakeSensor.value;
 
   // sync the leds in deviceState to the ones in received pushState
-  for (size_t i = 0; i < nrOfLeds; i++) {
+  for (size_t i = 0; i < nrOfLeds; i++)
+  {
     deviceState[role].leds[i] = pushState[role].leds[i];
   }
   // Now set the leds from the deviceState (which should be updated by received
   // radio mesage)
-  for (size_t i = 0; i < nrOfLeds; i++) {
+  for (size_t i = 0; i < nrOfLeds; i++)
+  {
     // float scaler = (sin((float)millis()/1500.f) + 1)/2.f;
     // scaler = 1.f + scaler;
     analogWrite(ledPins[i], deviceState[role].leds[i]);
@@ -968,7 +1114,8 @@ void nodeLoop() {
 
   // EM7180_printAlgorithmDetails();
 
-  if (sincePrint > printInterval) {
+  if (sincePrint > printInterval)
+  {
     sincePrint = 0;
     // radio.printDetails();
     // writeAckPacks((void *)&deviceState, stateSize);
@@ -977,92 +1124,117 @@ void nodeLoop() {
   handleSerialNode();
 }
 
-void printAngleDistances() {
+void printAngleDistances()
+{
   printf("angleDistances: ");
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       printf("%f, ", distances[i]);
     }
   }
   Serial.println();
 }
 
-void printClampedAngleDistances() {
+void printClampedAngleDistances()
+{
   printf("clampedAngleDistances: ");
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       printf("%f, ", clampedDistances[i]);
     }
   }
   Serial.println();
 }
 
-void printRawParameterWeights() {
+void printRawParameterWeights()
+{
   printf("rawParameterWeights: ");
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       printf("%f, ", rawParameterWeights[i]);
     }
   }
   Serial.println();
 }
 
-void printParameterWeights() {
+void printParameterWeights()
+{
   printf("parameterWeights: ");
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       printf("%f, ", parameterWeights[i]);
     }
   }
   Serial.println();
 }
 
-void printFullyTriggered() {
+void printFullyTriggered()
+{
   printf("fully Triggered: ");
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       printf("%i, ", fullyTriggeredPoses[i]);
     }
   }
   Serial.println();
 }
 
-void printOuterRadius() {
+void printOuterRadius()
+{
   printf("minDistances (angle): ");
-  for (size_t i = 0; i < nrOfParameterGroups; i++) {
-    if (currentPreset->savedParameterGroups[i].active) {
+  for (size_t i = 0; i < nrOfParameterGroups; i++)
+  {
+    if (currentPreset->savedParameterGroups[i].active)
+    {
       printf("%f, ", currentPreset->savedParameterGroups[i].outerRadius);
     }
   }
   Serial.println();
 }
 
-void printState(struct state deviceState) {
+void printState(struct state deviceState)
+{
   printf("nodeId\t %i \n", deviceState.nodeId);
   printf("messageCounter\t %i \n", deviceState.updateCounter);
   printf("quaternion\t %f,%f,%f,%f \n", Q15ToFloat(deviceState.quaternion.w),
          Q15ToFloat(deviceState.quaternion.x),
          Q15ToFloat(deviceState.quaternion.y),
          Q15ToFloat(deviceState.quaternion.z));
-  for (size_t buttonIndex = 0; buttonIndex < nrOfButtons; buttonIndex++) {
+  for (size_t buttonIndex = 0; buttonIndex < nrOfButtons; buttonIndex++)
+  {
     printf("button %i\t %i \n", buttonIndex, deviceState.buttons[buttonIndex]);
   }
   // printf("shake\t %i \n", deviceState.shake);
   printf("rotaryButton\t %i \n", deviceState.rotaryButton);
   printf("rotary\t %i \n", deviceState.rotary);
-  for (size_t ledIndex = 0; ledIndex < nrOfLeds; ledIndex++) {
+  for (size_t ledIndex = 0; ledIndex < nrOfLeds; ledIndex++)
+  {
     printf("led %i\t %i \n", ledIndex, deviceState.leds[ledIndex]);
   }
 }
 
-void printQuaternion(quaternion q) {
+void printQuaternion(quaternion q)
+{
   printf("quaternion\t %f,%f,%f,%f \n", q.w, q.x, q.y, q.z);
 }
 
-void handleSerialBaseStation() {
-  if (Serial.available()) {
+void handleSerialBaseStation()
+{
+  if (Serial.available())
+  {
     uint8_t c = Serial.read();
-    switch (c) {
+    switch (c)
+    {
     case '1':
       // learnedPoses[0] = currentQuaternion;
       // activePoseSlots[0] = true;
@@ -1108,10 +1280,13 @@ void handleSerialBaseStation() {
   }
 }
 
-void handleSerialNode() {
-  if (Serial.available()) {
+void handleSerialNode()
+{
+  if (Serial.available())
+  {
     uint8_t c = Serial.read();
-    switch (c) {
+    switch (c)
+    {
     case 'r':
       shouldRestartAcker = true;
       break;
@@ -1124,14 +1299,17 @@ char fileNames[nrOfPresetSlots][14] = {"saveData1.bin", "saveData2.bin",
                                        "saveData5.bin"};
 char fileName[] = {"saveData.bin"};
 File saveFile;
-bool saveToSD() {
+bool saveToSD()
+{
   saveFile = SD.open(fileName, FILE_WRITE);
-  if (!saveFile) {
+  if (!saveFile)
+  {
     printf("Failed to open/create saveFile in write mode! Your CRYYY!\n");
     delay(500);
     return;
   }
-  if (!saveFile.seek(0)) {
+  if (!saveFile.seek(0))
+  {
     printf("failed to seek\n");
     return false;
   }
@@ -1145,9 +1323,11 @@ bool saveToSD() {
   saveFile.close();
 }
 
-bool loadFromSD() {
+bool loadFromSD()
+{
   saveFile = SD.open(fileName);
-  if (!saveFile) {
+  if (!saveFile)
+  {
     printf("Failed to open saveFile in read mode! Your CRYYY!\n");
     delay(500);
     return;
