@@ -337,6 +337,7 @@ void onControlChange(byte channel, byte control, byte value) {
   // printf("control change received\n");
   if (recordControlChanges && !controlChanges[control].active) {
     printf("recording CC number %i \n", control);
+    sincePrint = 2000;
     controlChanges[control].active = true;
     controlChanges[control].cc = control;
   }
@@ -349,7 +350,7 @@ struct parameterGroupState {
   int slot;
   bool active;
   quaternion savedPose;
-  float distanceToClosestPose;
+  float outerRadius;
   controlChange savedControlChanges[maxNrOfCCsInParameterGroup];
   note savedNotes[maxNrOfNotesInParameterGroup];
 };
@@ -362,13 +363,6 @@ struct preset {
 const int nrOfPresetSlots = 5;
 preset presets[nrOfPresetSlots] = {0};
 preset *currentPreset = &presets[0];
-// ******************************************************************************************************************************************************
-// ******************************************************************************************************************************************************
-// ******************************************************************************************************************************************************
-// ******************************************************************************************************************************************************
-// TODO: Very important! Figure out a sensible way to handle unset
-// controlchanges in parameter groups. I.e when different parametergroups
-// contain different control changes
 
 bool anyParamGroupSaved = false;
 void saveParameterGroup(int slot) {
@@ -440,8 +434,8 @@ void calculatePoseMinDistances () {
           minDistance = aDistance < minDistance? aDistance: minDistance;
         }
       }
-      currentPreset->savedParameterGroups[i].distanceToClosestPose = minDistance;
-      printf("distanceToClosestPose for %i is %f\n", i, currentPreset->savedParameterGroups[i].distanceToClosestPose);
+      currentPreset->savedParameterGroups[i].outerRadius = minDistance;
+      printf("outerRadius for %i is %f\n", i, currentPreset->savedParameterGroups[i].outerRadius);
     }
   }
 }
@@ -503,31 +497,35 @@ void calculateParameterWeights() {
   // } else /// Otherwise calculate weight on all poses
 
 
-  // // Loop through and check if any is within outerRadius
-  // bool noneWithinOuterRadius = true;
-  // for (size_t i = 0; i < nrOfParameterGroups; i++) {
-  //   if (currentPreset->savedParameterGroups[i].active) {
-  //     if (distances[i] < currentPreset->savedParameterGroups[i].distanceToClosestPose - clampAngle) {
-  //       noneWithinOuterRadius = false;
-  //     } else {
-  //     }
-  //   }
-  // }
-  // if(noneWithinOuterRadius){
-  //   for (size_t i = 0; i < nrOfParameterGroups; i++) {
-  //     if (currentPreset->savedParameterGroups[i].active) {
-  //       rawParameterWeights[i] = 1.f / distances[i];
-  //       weightSum += rawParameterWeights[i];
-  //     }
-  //   }
-  // }else
+  // Loop through and check if any is within outerRadius
+  bool noneWithinOuterRadius = true;
+  for (size_t i = 0; i < nrOfParameterGroups; i++) {
+    if (currentPreset->savedParameterGroups[i].active) {
+      if (distances[i] < currentPreset->savedParameterGroups[i].outerRadius - clampAngle) {
+        noneWithinOuterRadius = false;
+      }
+    }
+  }
+  if(noneWithinOuterRadius){
+    for (size_t i = 0; i < nrOfParameterGroups; i++) {
+      if (currentPreset->savedParameterGroups[i].active) {
+        float distanceToOuterRadius = distances[i] - (currentPreset->savedParameterGroups[i].outerRadius - clampAngle);
+        if (distanceToOuterRadius < 0.001f) {
+          rawParameterWeights[i] = INFINITY;
+        } else {
+          rawParameterWeights[i] = 1.0f / distanceToOuterRadius;
+        }
+        weightSum += rawParameterWeights[i];
+      }
+    }
+  }else
 
   {
     for (size_t i = 0; i < nrOfParameterGroups; i++) {
       if (currentPreset->savedParameterGroups[i].active) {
-        // if (true || distances[i] < currentPreset->savedParameterGroups[i].distanceToClosestPose) {
+        // if (true || distances[i] < currentPreset->savedParameterGroups[i].outerRadius) {
           clampedDistances[i] = distances[i] - clampAngle;
-          clampedOuterRadius[i] = currentPreset->savedParameterGroups[i].distanceToClosestPose - clampAngle;
+          clampedOuterRadius[i] = currentPreset->savedParameterGroups[i].outerRadius - clampAngle;
 
           // TODO: Try with quadratic or cubic weighting i.e. 1.0 / (
           // clampedDistances[i] * clampedDistances[i])
@@ -897,7 +895,7 @@ void baseStationLoop() {
     // Serial.println();
 
     printSavedParameterGroups();
-    printDistanceToClosestPose();
+    printOuterRadius();
     printAngleDistances();
     printClampedAngleDistances();
     printRawParameterWeights();
@@ -1029,11 +1027,11 @@ void printFullyTriggered() {
   Serial.println();
 }
 
-void printDistanceToClosestPose() {
+void printOuterRadius() {
   printf("minDistances (angle): ");
   for (size_t i = 0; i < nrOfParameterGroups; i++) {
     if (currentPreset->savedParameterGroups[i].active) {
-      printf("%f, ", currentPreset->savedParameterGroups[i].distanceToClosestPose);
+      printf("%f, ", currentPreset->savedParameterGroups[i].outerRadius);
     }
   }
   Serial.println();
