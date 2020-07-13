@@ -245,6 +245,9 @@ void setup()
     usbMIDI.setHandleControlChange(onControlChange);
     usbMIDI.setHandleNoteOn(onNoteOn);
     usbMIDI.setHandleNoteOff(onNoteOff);
+
+    printf("waiting a bit for continous serial output so we don't spam the serial at start\n");
+    sincePrint = 0;
   }
   else
   {
@@ -400,7 +403,7 @@ preset presets[nrOfPresetSlots] = {0};
 preset *currentPreset = &presets[0];
 
 bool anyParamGroupSaved = false;
-void saveParameterGroup(int slot)
+void saveMidiForParameterGroup(int slot)
 {
   // disable addition of more control changes after first saved parameter group
   recordControlChanges = false;
@@ -446,9 +449,20 @@ void saveParameterGroup(int slot)
     currentPreset->savedParameterGroups[slot].savedNotes[k].active = false;
     k++;
   }
+};
+
+void savePoseForParameterGroup(int slot)
+{
+  currentPreset->savedParameterGroups[slot].savedPose = currentQuaternion;
 
   calculatePoseMinDistances();
 };
+
+void saveParameterGroup(int slot)
+{
+  saveMidiForParameterGroup(slot);
+  savePoseForParameterGroup(slot);
+}
 
 void clearParameterGroup(int slot)
 {
@@ -457,13 +471,6 @@ void clearParameterGroup(int slot)
 
   calculatePoseMinDistances();
 }
-
-void savePoseForParameterGroup(int slot)
-{
-  currentPreset->savedParameterGroups[slot].savedPose = currentQuaternion;
-
-  calculatePoseMinDistances();
-};
 
 void setReferenceOrientation()
 {
@@ -1040,6 +1047,11 @@ void baseStationLoop()
           sendPoseMidi();
         }
       }
+      if (wasButtonReleased(1))
+      {
+        usbMIDI.sendNoteOn(0, 127, 1);
+        usbMIDI.sendNoteOn(0, 0, 1);
+      }
       if (wasButtonReleased(4))
       {
         setReferenceOrientation();
@@ -1068,6 +1080,17 @@ void baseStationLoop()
         if (wasButtonPressed(slot))
         {
           savePoseForParameterGroup(slot);
+        }
+      }
+    }
+    else if (currentMode == 3) // param group save midi
+    {
+      turnOnLedsForActiveParameterGroups();
+      for (size_t slot = 0; slot < nrOfButtons; slot++)
+      {
+        if (wasButtonPressed(slot))
+        {
+          saveMidiForParameterGroup(slot);
         }
       }
     }
@@ -1141,6 +1164,8 @@ void baseStationLoop()
 }
 
 elapsedMillis sinceLastLoop = 0;
+elapsedMillis sinceReceivedRadioMessage = 0;
+uint8_t previousUpdateCounter = 0;
 void nodeLoop()
 {
   noInterrupts();
@@ -1211,8 +1236,21 @@ void nodeLoop()
   if (sincePrint > printInterval)
   {
     sincePrint = 0;
+    // printState(pushState[role]);
     // radio.printDetails();
     // writeAckPacks((void *)&deviceState, stateSize);
+  }
+
+  //Show a pulsating red led when not receiving any radio communication
+  if (previousUpdateCounter != pushState[role].updateCounter)
+  {
+    previousUpdateCounter = pushState[role].updateCounter;
+    sinceReceivedRadioMessage = 0;
+  }
+  if (sinceReceivedRadioMessage > 1000)
+  {
+    clearAllLeds();
+    pulsateLed(1, 1.f);
   }
 
   handleSerialNode();
@@ -1299,7 +1337,7 @@ void printOuterRadius()
 void printState(struct state deviceState)
 {
   printf("nodeId\t %i \n", deviceState.nodeId);
-  printf("messageCounter\t %i \n", deviceState.updateCounter);
+  printf("updateCounter\t %i \n", deviceState.updateCounter);
   printf("quaternion\t %f,%f,%f,%f \n", Q15ToFloat(deviceState.quaternion.w),
          Q15ToFloat(deviceState.quaternion.x),
          Q15ToFloat(deviceState.quaternion.y),
@@ -1332,27 +1370,27 @@ void handleSerialBaseStation()
     case '1':
       // learnedPoses[0] = currentQuaternion;
       // activePoseSlots[0] = true;
-      saveParameterGroup(0);
+      saveMidiForParameterGroup(0);
       break;
     case '2':
       // learnedPoses[1] = currentQuaternion;
       // activePoseSlots[1] = true;
-      saveParameterGroup(1);
+      saveMidiForParameterGroup(1);
       break;
     case '3':
       // learnedPoses[2] = currentQuaternion;
       // activePoseSlots[2] = true;
-      saveParameterGroup(2);
+      saveMidiForParameterGroup(2);
       break;
     case '4':
       // learnedPoses[3] = currentQuaternion;
       // activePoseSlots[3] = true;
-      saveParameterGroup(3);
+      saveMidiForParameterGroup(3);
       break;
     case '5':
       // learnedPoses[3] = currentQuaternion;
       // activePoseSlots[3] = true;
-      saveParameterGroup(4);
+      saveMidiForParameterGroup(4);
       break;
     case 'r':
       shouldRestartPoller = true;
