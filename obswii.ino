@@ -171,13 +171,13 @@ Button_Class encButton = Button_Class(ENCBUTTON_pin, BOUNCEDURATION,
 void encButtonInterrupt() { encButton.interrupt(); }
 
 Knob_Class rotary = Knob_Class(ROTARY_pin1, ROTARY_pin2);
+int rotaryDeltaValue = 0;
 // const int rotaryGroundPin = 34;
 
 const int nrOfButtons = sizeof(button) / sizeof(button[0]);
 
-const int nrOfLeds = 5;
-const int ledPins[nrOfLeds] = {LED_pin0, LED_pin1, LED_pin2, LED_pin3,
-                               LED_pin4};
+const int ledPins[] = {LED_pin0, LED_pin1, LED_pin2, LED_pin3, LED_pin4};
+const int nrOfLeds = sizeof(ledPins) / sizeof(ledPins[0]);
 
 // MIDI stuff
 bool shouldSendPoseMidi = false;
@@ -760,6 +760,65 @@ void sendPoseMidi()
   }
 }
 
+bool mainModeButtonToggleStates[] = {false, false, false, false, false};
+void updateMainModeButtonToggleStates()
+{
+  for (size_t i = 0; i < nrOfButtons; i++)
+  {
+    if (wasButtonReleased(i))
+    {
+      mainModeButtonToggleStates[i] = !mainModeButtonToggleStates[i];
+
+      if (mainModeButtonToggleStates[i])
+      {
+        usbMIDI.sendNoteOn(i + 1, 127, 1);
+      }
+      else
+      {
+        usbMIDI.sendNoteOn(i + 1, 0, 1);
+      }
+    }
+  }
+}
+
+void updateMainMode()
+{
+  shouldSendPoseMidi =
+      wasButtonReleased(0) ? !shouldSendPoseMidi : shouldSendPoseMidi;
+  if (shouldSendPoseMidi)
+  {
+
+    fadeLedsFromWeights();
+    // turnOnLed(0);
+    if (sinceMidiSend > midiSendInterval)
+    {
+      sinceMidiSend = 0;
+      sendPoseMidi();
+    }
+  }
+
+  // updateMainModeButtonToggleStates();
+
+  if (rotaryDeltaValue > 0)
+  {
+    usbMIDI.sendNoteOn(0, 127, 1);
+  }
+  else if (rotaryDeltaValue < 0)
+  {
+
+    usbMIDI.sendNoteOn(0, 0, 1);
+  }
+
+  // if (wasButtonReleased(1))
+  // {
+
+  // }
+  if (wasButtonReleased(4))
+  {
+    setReferenceOrientation();
+  }
+}
+
 void loop()
 {
   // What is the time?
@@ -790,7 +849,7 @@ void loop()
 }
 
 int16_t rotaryModeReferenceValue;
-int prevRotaryValue = 0;
+
 int prevEncButton = 0;
 bool modeChooserActive = false;
 int modeCandidate = 0;
@@ -965,6 +1024,34 @@ void pulsateLed(int i, float interval, float intensity)
   pushState[currentNode].leds[i] = ledBrightness[i] * lfoValue * intensity;
 };
 
+void dutyCycleLed(int i, float interval, float intensity, float duty)
+{
+  unsigned long t = millis();
+  unsigned long intervalMillis = interval * 1000;
+  // float lfoValue = sin((float)t * 0.001 * PI / interval) * 0.5 + 0.5;
+  // float lfoValue = interval - abs(t % (2 * interval) - interval);
+  float lfoValue = float(t % intervalMillis) / intervalMillis;
+  lfoValue = lfoValue > duty ? 0.f : 1.f;
+  // printf("led: %f\n", lfoValue);
+
+  // int foo(const int position, const int period){return period - abs(position % (2 * period) - period);}
+  pushState[currentNode].leds[i] = ledBrightness[i] * lfoValue * intensity;
+};
+
+bool areAllLedsOff()
+{
+  bool allLedsAreOff = true;
+  for (size_t i = 0; i < nrOfLeds; i++)
+  {
+    if (pushState[currentNode].leds[i] != 0)
+    {
+      allLedsAreOff = false;
+    }
+  }
+
+  return allLedsAreOff;
+}
+
 bool wasButtonPressed(int i)
 {
   bool changed = deviceState[currentNode].buttons[i] !=
@@ -1022,6 +1109,19 @@ void baseStationLoop()
     }
   }
 
+  // Update delta change of rotary encoder
+  // TODO: Make completely sure it won't give "negative" last value from bouncing past and back to "snap" position.
+  // could be handled by making use of that each step is four values apart. Together with some timer functionality to not get stuck on inbetween-values.
+  int currentRotary = (deviceState[currentNode].rotary - 2) / 4;
+  int prevRotary = (previousDeviceState[currentNode].rotary - 2) / 4;
+  rotaryDeltaValue = currentRotary - prevRotary;
+
+  if (rotaryDeltaValue != 0)
+  {
+    printf("rotaryDeltaValue: %i\n", rotaryDeltaValue);
+    sincePrint = 0;
+  }
+
   checkModeChooser();
   if (modeChooserActive)
   {
@@ -1034,28 +1134,7 @@ void baseStationLoop()
     clearAllLeds();
     if (currentMode == 0)
     {
-      shouldSendPoseMidi =
-          wasButtonReleased(0) ? !shouldSendPoseMidi : shouldSendPoseMidi;
-      if (shouldSendPoseMidi)
-      {
-
-        fadeLedsFromWeights();
-        // turnOnLed(0);
-        if (sinceMidiSend > midiSendInterval)
-        {
-          sinceMidiSend = 0;
-          sendPoseMidi();
-        }
-      }
-      if (wasButtonReleased(1))
-      {
-        usbMIDI.sendNoteOn(0, 127, 1);
-        usbMIDI.sendNoteOn(0, 0, 1);
-      }
-      if (wasButtonReleased(4))
-      {
-        setReferenceOrientation();
-      }
+      updateMainMode();
     }
     else if (currentMode == 1) // pose creation mode
     {
@@ -1149,13 +1228,13 @@ void baseStationLoop()
     printState(deviceState[currentNode]);
 
     printQuaternion(currentQuaternion);
-    printSavedParameterGroups();
+    // printSavedParameterGroups();
     printOuterRadius();
     printAngleDistances();
     printClampedAngleDistances();
     printRawParameterWeights();
     printParameterWeights();
-    printFullyTriggered();
+    // printFullyTriggered();
   }
 
   handleSerialBaseStation();
@@ -1251,6 +1330,11 @@ void nodeLoop()
   {
     clearAllLeds();
     pulsateLed(1, 1.f);
+  }
+  else if (areAllLedsOff())
+  {
+    //heartbeat when all leds are dark
+    dutyCycleLed(0, 1.f, 0.2, 0.05);
   }
 
   handleSerialNode();
