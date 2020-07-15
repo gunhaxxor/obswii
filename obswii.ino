@@ -403,16 +403,66 @@ preset presets[nrOfPresetSlots] = {0};
 preset *currentPreset = &presets[0];
 
 bool anyParamGroupSaved = false;
+
 void saveMidiForParameterGroup(int slot)
 {
-  // disable addition of more control changes after first saved parameter group
-  recordControlChanges = false;
-  recordNotes = false;
-  anyParamGroupSaved = true;
+  currentPreset->savedParameterGroups[slot].active = true;
+  currentPreset->savedParameterGroups[slot].slot = slot;
+
+  //find an already saved param group and copy everything but the actual values from that one.
+  parameterGroupState *copySource = NULL;
+  if (currentPreset->savedParameterGroups[slot].active)
+  {
+    copySource = &currentPreset->savedParameterGroups[slot];
+  }
+  else
+  {
+    for (size_t i = 0; i < nrOfParameterGroups; i++)
+    {
+
+      if (currentPreset->savedParameterGroups[i].active)
+      {
+        copySource = &currentPreset->savedParameterGroups[i];
+      }
+    }
+  }
+  if (copySource == NULL)
+  {
+    printf("something went to hell! \n");
+    sincePrint = 0;
+    return;
+  }
+
+  for (size_t k = 0; k < maxNrOfCCsInParameterGroup; k++)
+  {
+    if (copySource->savedControlChanges[k].active)
+    {
+      currentPreset->savedParameterGroups[slot].savedControlChanges[k].active = true;
+      currentPreset->savedParameterGroups[slot].savedControlChanges[k].cc = copySource->savedControlChanges[k].cc;
+
+      //Save the actual value from received incoming midi
+      currentPreset->savedParameterGroups[slot].savedControlChanges[k].value = controlChanges[copySource->savedControlChanges[k].cc].value;
+    }
+  }
+
+  for (size_t k = 0; k < maxNrOfNotesInParameterGroup; k++)
+  {
+    if (copySource->savedNotes[k].active)
+    {
+      currentPreset->savedParameterGroups[slot].savedNotes[k].active = true;
+      currentPreset->savedParameterGroups[slot].savedNotes[k].note = copySource->savedNotes[k].note;
+
+      //Save the actual value from received incoming midi
+      currentPreset->savedParameterGroups[slot].savedNotes[k].velocity = notes[copySource->savedNotes[k].note].velocity;
+    }
+  }
+}
+
+void saveMidiForFirstParameterGroup(int slot)
+{
 
   currentPreset->savedParameterGroups[slot].active = true;
   currentPreset->savedParameterGroups[slot].slot = slot;
-  currentPreset->savedParameterGroups[slot].savedPose = currentQuaternion;
 
   // save the recorded cc values
   int k = 0;
@@ -449,6 +499,11 @@ void saveMidiForParameterGroup(int slot)
     currentPreset->savedParameterGroups[slot].savedNotes[k].active = false;
     k++;
   }
+
+  // disable addition of more control changes after first saved parameter group
+  recordControlChanges = false;
+  recordNotes = false;
+  anyParamGroupSaved = true;
 };
 
 void savePoseForParameterGroup(int slot)
@@ -460,7 +515,14 @@ void savePoseForParameterGroup(int slot)
 
 void saveParameterGroup(int slot)
 {
-  saveMidiForParameterGroup(slot);
+  if (!anyParamGroupSaved)
+  {
+    saveMidiForFirstParameterGroup(slot);
+  }
+  else
+  {
+    saveMidiForParameterGroup(slot);
+  }
   savePoseForParameterGroup(slot);
 }
 
@@ -657,20 +719,22 @@ void printParameterGroup(struct parameterGroupState paramGroup)
   {
     if (paramGroup.savedControlChanges[i].active)
     {
-      printf("%i: control=%i \t value=%i \n", i,
+      printf("%i: cc=%i val=%i \t", i,
              paramGroup.savedControlChanges[i].cc,
              paramGroup.savedControlChanges[i].value);
     }
   }
+  printf("\n");
 
   for (size_t i = 0; i < maxNrOfNotesInParameterGroup; i++)
   {
     if (paramGroup.savedNotes[i].active)
     {
-      printf("%i: note=%i \t velocity=%i \n", i, paramGroup.savedNotes[i].note,
+      printf("%i: note=%i vel=%i \t", i, paramGroup.savedNotes[i].note,
              paramGroup.savedNotes[i].velocity);
     }
   }
+  printf("\n");
 }
 
 void sendPoseMidi()
@@ -781,6 +845,7 @@ void updateMainModeButtonToggleStates()
   }
 }
 
+bool globalToggle = true;
 void updateMainMode()
 {
   shouldSendPoseMidi =
@@ -802,11 +867,17 @@ void updateMainMode()
   if (rotaryDeltaValue > 0)
   {
     usbMIDI.sendNoteOn(0, 127, 1);
+    globalToggle = true;
   }
   else if (rotaryDeltaValue < 0)
   {
-
     usbMIDI.sendNoteOn(0, 0, 1);
+    globalToggle = false;
+  }
+
+  if (!globalToggle)
+  {
+    dutyCycleLed(1, 0.1, 0.5, 0.5);
   }
 
   // if (wasButtonReleased(1))
@@ -1154,6 +1225,10 @@ void baseStationLoop()
     else if (currentMode == 2) // pose repositioning mode
     {
       fadeLedsFromWeights();
+      if (rotaryDeltaValue > 0)
+      {
+        setReferenceOrientation();
+      }
       for (size_t slot = 0; slot < nrOfButtons; slot++)
       {
         if (wasButtonPressed(slot))
@@ -1228,7 +1303,7 @@ void baseStationLoop()
     printState(deviceState[currentNode]);
 
     printQuaternion(currentQuaternion);
-    // printSavedParameterGroups();
+    printSavedParameterGroups();
     printOuterRadius();
     printAngleDistances();
     printClampedAngleDistances();
@@ -1454,27 +1529,27 @@ void handleSerialBaseStation()
     case '1':
       // learnedPoses[0] = currentQuaternion;
       // activePoseSlots[0] = true;
-      saveMidiForParameterGroup(0);
+      saveMidiForFirstParameterGroup(0);
       break;
     case '2':
       // learnedPoses[1] = currentQuaternion;
       // activePoseSlots[1] = true;
-      saveMidiForParameterGroup(1);
+      saveMidiForFirstParameterGroup(1);
       break;
     case '3':
       // learnedPoses[2] = currentQuaternion;
       // activePoseSlots[2] = true;
-      saveMidiForParameterGroup(2);
+      saveMidiForFirstParameterGroup(2);
       break;
     case '4':
       // learnedPoses[3] = currentQuaternion;
       // activePoseSlots[3] = true;
-      saveMidiForParameterGroup(3);
+      saveMidiForFirstParameterGroup(3);
       break;
     case '5':
       // learnedPoses[3] = currentQuaternion;
       // activePoseSlots[3] = true;
-      saveMidiForParameterGroup(4);
+      saveMidiForFirstParameterGroup(4);
       break;
     case 'r':
       shouldRestartPoller = true;
@@ -1551,5 +1626,6 @@ bool loadFromSD()
   // saveFile.read((uint8_t *)currentPreset->savedParameterGroups,
   // sizeof(parameterGroupState) * nrOfParameterGroups);
   saveFile.read((uint8_t *)presets, sizeof(preset) * nrOfPresetSlots);
+  anyParamGroupSaved = true;
   saveFile.close();
 }
