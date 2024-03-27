@@ -626,7 +626,7 @@ void restartPoller()
   commonSetup();
   setupPoller();
   radio.failureDetected = 0;
-  radio.printDetails();
+  // radio.printDetails();
 }
 
 // void updateStats(uint8_t node, bool success, bool isEdge, unsigned long startStamp){
