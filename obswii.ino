@@ -9,20 +9,26 @@
 //  MOSI      -
 //  MISO      -
 //  INT       -
+
+#include <SPI.h>
+#include "RF24.h"
+#include "nRF24L01.h"
+#undef printf
+
 #include "MAPPINGS.h"
 #include "button.h"
 #include "helpers.h"
 #include "knob.h"
 
-#include "RF24.h"
-#include "nRF24L01.h"
-#include <SPI.h>
+
 
 #include <Adafruit_BNO055_t3.h>
 #include <Adafruit_Sensor.h>
 #include <i2c_t3.h>
 
 #include "SD.h"
+
+#define printf Serial.printf
 
 unsigned long now = 0;
 
@@ -197,6 +203,13 @@ void configurePinAsGround(int pin)
   pinMode(pin, OUTPUT);
   digitalWrite(pin, LOW);
 }
+
+//Declare led utility function with default arguments
+void pulsateLed(int i, float interval = 0.5f, float intensity = 1.f, float offset = 0.f);
+void fadeLedFromWeightDutyCycled(int i, float interval, float intensity = 1.f, float duty = .5f, float offset = 0.f);
+float ledValueFromWeightDutyCycled(float interval, float intensity, float duty = .5f, float offset = 0.f);
+float ledValueDutyCycle(float interval = 1.f, float intensity = 1.f, float duty = 0.5f, float offset = 0.f);
+float ledValuePulsating(float interval = 0.5f, float intensity = 1.f, float offset = 0.f);
 
 void setup()
 {
@@ -850,15 +863,32 @@ void updateMainMode()
 {
   shouldSendPoseMidi =
       wasButtonReleased(0) ? !shouldSendPoseMidi : shouldSendPoseMidi;
-  if (shouldSendPoseMidi)
+  if (globalToggle)
   {
-
-    fadeLedsFromWeights();
-    // turnOnLed(0);
-    if (sinceMidiSend > midiSendInterval)
+    if (shouldSendPoseMidi)
     {
-      sinceMidiSend = 0;
-      sendPoseMidi();
+      fadeLedsFromWeights();
+      if (sinceMidiSend > midiSendInterval)
+      {
+        sinceMidiSend = 0;
+        sendPoseMidi();
+      }
+    }
+    else
+    {
+      //heartbeat white led when all leds are dark
+      dutyCycleLed(0, 1.f, 0.2, 0.05);
+    }
+  }
+  else
+  {
+    if (shouldSendPoseMidi)
+    {
+      fadeLedsFromWeightsDutyCycled(0.05, 1.f, .5f);
+    }
+    else
+    {
+      dutyCycleLed(1, 0.1, 0.5, 0.5);
     }
   }
 
@@ -873,11 +903,6 @@ void updateMainMode()
   {
     usbMIDI.sendNoteOn(0, 0, 1);
     globalToggle = false;
-  }
-
-  if (!globalToggle)
-  {
-    dutyCycleLed(1, 0.1, 0.5, 0.5);
   }
 
   // if (wasButtonReleased(1))
@@ -996,10 +1021,11 @@ void updateModeChooser()
   clearAllLeds();
   for (size_t i = 0; i < nrOfLeds; i++)
   {
-    pulsateLed(i, 0.8f, 0.3);
+    pulsateLed(i, 0.5f, 0.3f, i * 0.2);
   }
   // fadeLed(i, 0.2);
-  turnOnLed(modeCandidate);
+  // turnOnLed(modeCandidate);
+  dutyCycleLed(modeCandidate, 0.05, 1.f, .5f);
 
   // pulsateLed(modeCandidate, 0.2f);
 }
@@ -1039,18 +1065,43 @@ void turnOnLedsForActiveParameterGroups()
   }
 }
 
+void fadeLedsFromWeightsDutyCycled(float interval, float intensity, float duty)
+{
+  for (size_t i = 0; i < nrOfLeds; i++)
+  {
+    fadeLedFromWeightDutyCycled(i, interval, intensity, duty);
+  }
+}
+
+void fadeLedFromWeightDutyCycled(int i, float interval, float intensity, float duty, float offset)
+{
+  fadeLed(i, ledValueFromWeightDutyCycled(i, interval, intensity, duty, offset));
+}
+
+float ledValueFromWeightDutyCycled(int i, float interval, float intensity, float duty, float offset)
+{
+  float weight = ledValueFromWeight(i);
+  float dutyValue = ledValueDutyCycle(interval, intensity, duty, offset);
+  return weight * dutyValue;
+}
+
 void fadeLedsFromWeights()
 {
   for (size_t i = 0; i < nrOfParameterGroups; i++)
   {
-    if (currentPreset->savedParameterGroups[i].active)
-    {
-      fadeLed(i, parameterWeights[i] * parameterWeights[i]);
-    }
-    else
-    {
-      turnOffLed(i);
-    }
+    fadeLed(i, ledValueFromWeight(i));
+  }
+}
+
+float ledValueFromWeight(int i)
+{
+  if (currentPreset->savedParameterGroups[i].active)
+  {
+    return parameterWeights[i] * parameterWeights[i];
+  }
+  else
+  {
+    return 0.f;
   }
 }
 
@@ -1081,33 +1132,35 @@ void fadeLed(int i, float intensity)
   pushState[currentNode].leds[i] = ledBrightness[i] * intensity;
 }
 
-void pulsateLed(int i, float interval)
+void pulsateLed(int i, float interval, float intensity, float offset)
 {
-  unsigned long t = millis();
-  float intensity = sin((float)t * 0.001 * PI / interval) * 0.5 + 0.5;
-  pushState[currentNode].leds[i] = ledBrightness[i] * intensity;
-};
+  pushState[currentNode].leds[i] = ledBrightness[i] * ledValuePulsating(interval, intensity, offset);
+}
 
-void pulsateLed(int i, float interval, float intensity)
+float ledValuePulsating(float interval, float intensity, float offset)
 {
   unsigned long t = millis();
-  float lfoValue = sin((float)t * 0.001 * PI / interval) * 0.5 + 0.5;
-  pushState[currentNode].leds[i] = ledBrightness[i] * lfoValue * intensity;
-};
+  float x = (float)t * 0.001 * PI / interval;
+  float lfoValue = sin(x + offset * PI) * 0.5 + 0.5;
+  return lfoValue * intensity;
+}
 
 void dutyCycleLed(int i, float interval, float intensity, float duty)
 {
+  pushState[currentNode].leds[i] = ledBrightness[i] * ledValueDutyCycle(interval, intensity, duty, 0);
+}
+
+float ledValueDutyCycle(float interval, float intensity, float duty, float offset)
+{
   unsigned long t = millis();
   unsigned long intervalMillis = interval * 1000;
-  // float lfoValue = sin((float)t * 0.001 * PI / interval) * 0.5 + 0.5;
-  // float lfoValue = interval - abs(t % (2 * interval) - interval);
-  float lfoValue = float(t % intervalMillis) / intervalMillis;
+  unsigned long offsetMillis = offset * intervalMillis;
+  float lfoValue = float((t + offsetMillis) % intervalMillis) / intervalMillis;
   lfoValue = lfoValue > duty ? 0.f : 1.f;
   // printf("led: %f\n", lfoValue);
 
-  // int foo(const int position, const int period){return period - abs(position % (2 * period) - period);}
-  pushState[currentNode].leds[i] = ledBrightness[i] * lfoValue * intensity;
-};
+  return lfoValue * intensity;
+}
 
 bool areAllLedsOff()
 {
@@ -1224,7 +1277,8 @@ void baseStationLoop()
     }
     else if (currentMode == 2) // pose repositioning mode
     {
-      fadeLedsFromWeights();
+      // fadeLedsFromWeights();
+      fadeLedsFromWeightsDutyCycled(0.05, 1.f, 0.5);
       if (rotaryDeltaValue > 0)
       {
         setReferenceOrientation();
@@ -1405,11 +1459,6 @@ void nodeLoop()
   {
     clearAllLeds();
     pulsateLed(1, 1.f);
-  }
-  else if (areAllLedsOff())
-  {
-    //heartbeat when all leds are dark
-    dutyCycleLed(0, 1.f, 0.2, 0.05);
   }
 
   handleSerialNode();

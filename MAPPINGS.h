@@ -49,7 +49,7 @@
 #define LED_pin4 38
 
 const uint8_t ledBrightness[5] = {
-    1100,
+    110,
     255,
     50,
     100,
