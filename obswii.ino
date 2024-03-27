@@ -334,6 +334,63 @@ struct note
   int velocity;
 };
 
+
+bool recordControlChanges = false;
+struct controlChange
+{
+  bool active;
+  int cc;
+  int value;
+};
+
+
+const int maxNrOfCCsInParameterGroup = 25;
+const int maxNrOfNotesInParameterGroup = 25;
+struct parameterGroupState
+{
+  int slot;
+  bool active;
+  quaternion savedPose;
+  float outerRadius;
+  controlChange savedControlChanges[maxNrOfCCsInParameterGroup];
+  note savedNotes[maxNrOfNotesInParameterGroup];
+};
+const int nrOfParameterGroups = 5;
+
+struct preset
+{
+  bool active = false;
+  parameterGroupState savedParameterGroups[nrOfParameterGroups];
+};
+const int nrOfPresetSlots = 5;
+preset presets[nrOfPresetSlots] = {0};
+preset *currentPreset = &presets[0];
+
+bool anyParamGroupSaved = false;
+
+// const int nrOfControlChanges = 15
+const int nrOfCCs = 128;
+controlChange controlChanges[nrOfCCs] = {0};
+void onControlChange(byte channel, byte control, byte value)
+{
+  // digitalWrite(13, !digitalRead(13));
+  digitalWrite(13, HIGH);
+  // midiThru
+  usbMIDI.sendControlChange(control, value, channel);
+  // printf("control change received\n");
+  controlChanges[control].value = value;
+  controlChanges[control].cc = control;
+  if (recordControlChanges && !controlChanges[control].active)
+  {
+    printf("added new CC number %i \n", control);
+    sincePrint = 2000;
+    controlChanges[control].active = true;
+    if(anyParamGroupSaved){
+      addNewControlChangeToParameterGroups(control);
+    }
+  }
+}
+
 const int nrOfNotes = 127;
 note notes[nrOfNotes] = {0};
 
@@ -365,69 +422,20 @@ void onNoteOff(byte channel, byte note, byte velocity)
   notes[note].velocity = 0;
 }
 
-bool recordControlChanges = false;
-struct controlChange
-{
-  bool active;
-  int cc;
-  int value;
-};
-
-// const int nrOfControlChanges = 15
-const int nrOfCCs = 128;
-controlChange controlChanges[nrOfCCs] = {0};
-void onControlChange(byte channel, byte control, byte value)
-{
-  // digitalWrite(13, !digitalRead(13));
-  digitalWrite(13, HIGH);
-  // midiThru
-  usbMIDI.sendControlChange(control, value, channel);
-  // printf("control change received\n");
-  if (recordControlChanges && !controlChanges[control].active)
-  {
-    printf("recording CC number %i \n", control);
-    sincePrint = 2000;
-    controlChanges[control].active = true;
-    controlChanges[control].cc = control;
-  }
-  controlChanges[control].value = value;
-}
-
-const int maxNrOfCCsInParameterGroup = 25;
-const int maxNrOfNotesInParameterGroup = 25;
-struct parameterGroupState
-{
-  int slot;
-  bool active;
-  quaternion savedPose;
-  float outerRadius;
-  controlChange savedControlChanges[maxNrOfCCsInParameterGroup];
-  note savedNotes[maxNrOfNotesInParameterGroup];
-};
-const int nrOfParameterGroups = 5;
-
-struct preset
-{
-  bool active = false;
-  parameterGroupState savedParameterGroups[nrOfParameterGroups];
-};
-const int nrOfPresetSlots = 5;
-preset presets[nrOfPresetSlots] = {0};
-preset *currentPreset = &presets[0];
-
-bool anyParamGroupSaved = false;
-
+// TODO: Can we memcopy/assign directly instead? Just dump a copy of another active parameter group into the selected slot?
+// I think this should be possible since we're using structs, and I think assignment operator performs copying
 void saveMidiForParameterGroup(int slot)
 {
-  currentPreset->savedParameterGroups[slot].active = true;
-  currentPreset->savedParameterGroups[slot].slot = slot;
 
   //find an already saved param group and copy everything but the actual values from that one.
   parameterGroupState *copySource = NULL;
+  // copy itself
   if (currentPreset->savedParameterGroups[slot].active)
   {
+    printf("COPYING FROM MYSELF FOR SAVING PARAMETER GROUP **************************************************\n");
     copySource = &currentPreset->savedParameterGroups[slot];
   }
+  // search the other slots for an active group
   else
   {
     for (size_t i = 0; i < nrOfParameterGroups; i++)
@@ -436,6 +444,7 @@ void saveMidiForParameterGroup(int slot)
       if (currentPreset->savedParameterGroups[i].active)
       {
         copySource = &currentPreset->savedParameterGroups[i];
+        break;
       }
     }
   }
@@ -445,12 +454,14 @@ void saveMidiForParameterGroup(int slot)
     sincePrint = 0;
     return;
   }
-
+  printf("COPYING FROM PARAMETER GROUP: \n");
+  printParameterGroup(*copySource);
+  
   for (size_t k = 0; k < maxNrOfCCsInParameterGroup; k++)
   {
+    currentPreset->savedParameterGroups[slot].savedControlChanges[k].active = copySource->savedControlChanges[k].active;
     if (copySource->savedControlChanges[k].active)
     {
-      currentPreset->savedParameterGroups[slot].savedControlChanges[k].active = true;
       currentPreset->savedParameterGroups[slot].savedControlChanges[k].cc = copySource->savedControlChanges[k].cc;
 
       //Save the actual value from received incoming midi
@@ -460,13 +471,42 @@ void saveMidiForParameterGroup(int slot)
 
   for (size_t k = 0; k < maxNrOfNotesInParameterGroup; k++)
   {
+    currentPreset->savedParameterGroups[slot].savedNotes[k].active = copySource->savedNotes[k].active;
     if (copySource->savedNotes[k].active)
     {
-      currentPreset->savedParameterGroups[slot].savedNotes[k].active = true;
       currentPreset->savedParameterGroups[slot].savedNotes[k].note = copySource->savedNotes[k].note;
 
       //Save the actual value from received incoming midi
       currentPreset->savedParameterGroups[slot].savedNotes[k].velocity = notes[copySource->savedNotes[k].note].velocity;
+    }
+  }
+
+  currentPreset->savedParameterGroups[slot].active = true;
+  currentPreset->savedParameterGroups[slot].slot = slot;
+}
+
+void addNewControlChangeToParameterGroups(int cc) {
+  
+  int foundFreeCCSlot = -1;
+  for(size_t groupIdx = 0; groupIdx < nrOfParameterGroups; groupIdx++){
+    if(foundFreeCCSlot != -1) break;
+    for(size_t i = 0; i < maxNrOfCCsInParameterGroup; i++) {
+     if(currentPreset->savedParameterGroups[groupIdx].active && !currentPreset->savedParameterGroups[groupIdx].savedControlChanges[i].active){
+      foundFreeCCSlot = i;
+      break;
+     }
+    }
+  }
+  
+  // By now we should have found a free cc slot if one exists
+  if(foundFreeCCSlot == -1) {
+    printf("No more slots for saving control changes ******************* \n");
+    return;
+  }
+
+  for(size_t groupSlot = 0; groupSlot < nrOfParameterGroups; groupSlot++) {
+    if(currentPreset->savedParameterGroups[groupSlot].active){
+      currentPreset->savedParameterGroups[groupSlot].savedControlChanges[foundFreeCCSlot] = controlChanges[cc];
     }
   }
 }
@@ -514,8 +554,9 @@ void saveMidiForFirstParameterGroup(int slot)
   }
 
   // disable addition of more control changes after first saved parameter group
-  recordControlChanges = false;
-  recordNotes = false;
+  // recordControlChanges = false;
+  // recordNotes = false;
+
   anyParamGroupSaved = true;
 };
 
@@ -710,6 +751,16 @@ void calculateParameterWeights()
   }
 }
 
+void printNrActiveControlChanges() {
+  int nrofActiveCCs = 0;
+  for (size_t i = 0; i < nrOfCCs; i++)
+  {
+    bool isActive = controlChanges[i].active;
+    if(isActive) nrofActiveCCs++;
+  }
+  printf("nr of active (added/recorded) CCs: %i\n", nrofActiveCCs);
+}
+
 void printSavedParameterGroups()
 {
   for (size_t i = 0; i < nrOfParameterGroups; i++)
@@ -721,10 +772,11 @@ void printSavedParameterGroups()
   }
 }
 
+// TODO: We should probably pass by reference here to avoid unnuccesary performance costs
 void printParameterGroup(struct parameterGroupState paramGroup)
 {
   // printf("parameter group slot %i \n", &paramGroup->)
-  printf("savedParamGroup slot %i -------------\n", paramGroup.slot);
+  printf("savedParamGroup slot %i (%s) -------------\n", paramGroup.slot, paramGroup.active?"active":"inactive");
   printf("w: %f, x:%f, y:%f, z:%f  \n", paramGroup.savedPose.w,
          paramGroup.savedPose.x, paramGroup.savedPose.y,
          paramGroup.savedPose.z);
@@ -973,7 +1025,7 @@ void checkModeChooser()
         modeChooserActive = false;
         currentMode = modeCandidate;
         // clearAllLeds();
-        if (currentMode == 1 && !anyParamGroupSaved)
+        if (currentMode == 1) //&& !anyParamGroupSaved)
         {
           recordControlChanges = true;
           recordNotes = true;
@@ -1032,11 +1084,11 @@ void updateModeChooser()
 
 void clearAll()
 {
+  printf("Clearing all -----------------------------------\n ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
   for (size_t i = 0; i < nrOfCCs; i++)
   {
     controlChanges[i].active = false;
   }
-
   for (size_t i = 0; i < nrOfNotes; i++)
   {
     notes[i].active = false;
@@ -1052,6 +1104,14 @@ void clearAll()
   }
   anyParamGroupSaved = false;
   referenceQuaternionSet = false;
+  
+  printf("paramgroups after clear:\n");
+  for (size_t paramGroupIdx = 0; paramGroupIdx < nrOfParameterGroups; paramGroupIdx++)
+  {
+    printParameterGroup(currentPreset->savedParameterGroups[paramGroupIdx]);
+  }
+  sincePrint = 0;
+  
 }
 
 void turnOnLedsForActiveParameterGroups()
@@ -1197,7 +1257,7 @@ void baseStationLoop()
       radio.failureDetected)
   {
     shouldRestartPoller = false;
-    printf("restarting radio!!");
+    // printf("restarting radio!!");
     restartPoller();
   }
   interrupts();
@@ -1317,7 +1377,9 @@ void baseStationLoop()
       }
     }
   }
-
+  // This allows us to pause printing for a while from other places in the code.
+  // By setting sincePrint to anything between 0 - 5000 we can pause 5000 - sincePrint milliseconds.
+  // doing sincePrint = 3000 would pause for approximately 2 seconds (disregarding printInterval offset)
   if (sincePrint > printInterval + 5000)
   {
     sincePrint = 5000;
@@ -1358,6 +1420,7 @@ void baseStationLoop()
 
     printQuaternion(currentQuaternion);
     printSavedParameterGroups();
+    printNrActiveControlChanges();
     printOuterRadius();
     printAngleDistances();
     printClampedAngleDistances();
