@@ -1302,8 +1302,8 @@ void baseStationLoop()
 
   if (rotaryDeltaValue != 0)
   {
-    printf("rotaryDeltaValue: %i\n", rotaryDeltaValue);
-    sincePrint = 0;
+    // printf("rotaryDeltaValue: %i\n", rotaryDeltaValue);
+    // sincePrint = 0;
   }
 
   checkModeChooser();
@@ -1738,6 +1738,15 @@ bool loadFromSD()
   // saveFile.read((uint8_t *)currentPreset->savedParameterGroups,
   // sizeof(parameterGroupState) * nrOfParameterGroups);
   saveFile.read((uint8_t *)presets, sizeof(preset) * nrOfPresetSlots);
-  anyParamGroupSaved = true;
+  anyParamGroupSaved = checkIfAnyParamGroupIsSaved();
   saveFile.close();
+}
+
+bool checkIfAnyParamGroupIsSaved() {
+  for (size_t groupIdx = 0; groupIdx < nrOfParameterGroups; groupIdx++)
+  {
+    if(currentPreset->savedParameterGroups[groupIdx].active) return true;
+  }
+  
+  return false;
 }
