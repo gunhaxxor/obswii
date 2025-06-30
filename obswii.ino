@@ -1276,9 +1276,7 @@ void baseStationLoop()
   }
   interrupts();
 
-  digitalWrite(LED_BUILTIN, LOW);
   usbMIDI.read();
-  // delay(10);
   bool radioSuccess = false;
   if (useRadio)
   {
@@ -1286,6 +1284,7 @@ void baseStationLoop()
                             (uint8_t *)&deviceState[currentNode]);
     if (radioSuccess)
     {
+      digitalToggleFast(LED_BUILTIN);
       // printf("poll received\n");
       absoluteOrientation.w = Q15ToFloat(deviceState[currentNode].quaternion.w);
       absoluteOrientation.x = Q15ToFloat(deviceState[currentNode].quaternion.x);
@@ -1303,6 +1302,7 @@ void baseStationLoop()
     }
     else
     {
+      digitalWriteFast(LED_BUILTIN, LOW);
       // printf("pollnode failed\n");
     }
   }
