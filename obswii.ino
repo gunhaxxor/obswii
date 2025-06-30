@@ -1738,8 +1738,17 @@ bool saveToSD()
   int writeCount =
       saveFile.write((uint8_t *)presets, sizeof(preset) * nrOfPresetSlots);
   printf("wrote %i bytes to the file. Wuuuhuu!\n", writeCount);
-  delay(250);
   saveFile.close();
+  for (int k = 0; k < 500; k++)
+  {
+    for (int i = 0; i < nrOfLeds; i++)
+    {
+      dutyCycleLed(i, 0.06f, 1.f, 0.05);
+    }
+    delay(2);
+    pollNode(0, (uint8_t *)&pushState[currentNode],
+             (uint8_t *)&deviceState[currentNode]);
+  }
   return true;
 }
 
