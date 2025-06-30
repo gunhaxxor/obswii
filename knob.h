@@ -2,6 +2,10 @@
 #define KNOB_H
 
 #include <Arduino.h>
+
+// Will conflict with attachIntterupt if it's used elsewhere in the codebase. So let's not use this for now.
+// https://www.pjrc.com/teensy/td_libs_Encoder.html#optimize
+// #define ENCODER_OPTIMIZE_INTERRUPTS
 #include <Encoder.h>
 #include "helpers.h"
 

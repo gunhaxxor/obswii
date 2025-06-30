@@ -211,22 +211,34 @@ float ledValueFromWeightDutyCycled(float interval, float intensity, float duty =
 float ledValueDutyCycle(float interval = 1.f, float intensity = 1.f, float duty = 0.5f, float offset = 0.f);
 float ledValuePulsating(float interval = 0.5f, float intensity = 1.f, float offset = 0.f);
 
+void ledBurst(int iterations = 50) {
+  for(int i = 0; i < iterations; i++){
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(15);
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(20);
+  }
+}
+
 void setup()
 {
 
   noInterrupts();
-
+  delay(2500);
   Serial.begin(115200);
   printf("Starting OBSWII firmware\n");
 
-  pinMode(13, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+
 
   // ROLE. Do this first so everything that relies on it works properly
   if (role == autoRole)
   {
     // baseStation is default
     role = baseStation;
-    // Reads the pins 0-1 as a binary bcd number.
+    // Set role to the index of the first pin (0 to nrOfNodes-1) that is pulled low.
+    // Defaults to baseStation if none are low.
     for (int i = 0; i < nrOfNodes; ++i)
     {
       pinMode(i, INPUT_PULLUP);
@@ -240,6 +252,8 @@ void setup()
   }
 
   printf("ROLE: %s\n\r", role_friendly_name[role]);
+
+  
 
   if (role == baseStation)
   {
@@ -1262,7 +1276,7 @@ void baseStationLoop()
   }
   interrupts();
 
-  digitalWrite(13, LOW);
+  digitalWrite(LED_BUILTIN, LOW);
   usbMIDI.read();
   // delay(10);
   bool radioSuccess = false;
@@ -1419,13 +1433,14 @@ void baseStationLoop()
     printState(deviceState[currentNode]);
 
     printQuaternion(currentQuaternion);
-    printSavedParameterGroups();
-    printNrActiveControlChanges();
-    printOuterRadius();
-    printAngleDistances();
-    printClampedAngleDistances();
-    printRawParameterWeights();
-    printParameterWeights();
+    // printSavedParameterGroups();
+    // printNrActiveControlChanges();
+    // printOuterRadius();
+    // printAngleDistances();
+    // printClampedAngleDistances();
+    // printRawParameterWeights();
+    // printParameterWeights();
+
     // printFullyTriggered();
   }
 
@@ -1461,7 +1476,7 @@ void nodeLoop()
   }
   interrupts();
 
-  unsigned long t = sinceLastLoop;
+  // unsigned long t = sinceLastLoop;
   sinceLastLoop = 0;
   // printf("loopTime %ul \n", t);
   // printf(".\n");
@@ -1507,6 +1522,7 @@ void nodeLoop()
   if (sincePrint > printInterval)
   {
     sincePrint = 0;
+    // printState(deviceState[role]);
     // printState(pushState[role]);
     // radio.printDetails();
     // writeAckPacks((void *)&deviceState, stateSize);
@@ -1709,7 +1725,7 @@ bool saveToSD()
   {
     printf("Failed to open/create saveFile in write mode! Your CRYYY!\n");
     delay(500);
-    return;
+    return false;
   }
   if (!saveFile.seek(0))
   {
@@ -1724,6 +1740,7 @@ bool saveToSD()
   printf("wrote %i bytes to the file. Wuuuhuu!\n", writeCount);
   delay(250);
   saveFile.close();
+  return true;
 }
 
 bool loadFromSD()
@@ -1733,13 +1750,14 @@ bool loadFromSD()
   {
     printf("Failed to open saveFile in read mode! Your CRYYY!\n");
     delay(500);
-    return;
+    return false;
   }
   // saveFile.read((uint8_t *)currentPreset->savedParameterGroups,
   // sizeof(parameterGroupState) * nrOfParameterGroups);
   saveFile.read((uint8_t *)presets, sizeof(preset) * nrOfPresetSlots);
   anyParamGroupSaved = checkIfAnyParamGroupIsSaved();
   saveFile.close();
+  return true;
 }
 
 bool checkIfAnyParamGroupIsSaved() {
